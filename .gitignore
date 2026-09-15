@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Database
+*.db
+*.sqlite3
+
+# Uploads
+uploads/
+
+# Node.js
+node_modules/
+
+# Build output
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Alembic
+alembic/versions/*.pyc
+
+# Temporary / verification scripts
+verify_*.py
+fix_*.py
+run_migration.py
