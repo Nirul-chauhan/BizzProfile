@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { getMyProfiles, getProfileDocuments, createProfile, getNearbyProfiles, getCategories, getSubcategories, searchProfiles, updateProfile, uploadProfilePic, removeProfilePic } from "../api";
 import {
   LayoutDashboard,
