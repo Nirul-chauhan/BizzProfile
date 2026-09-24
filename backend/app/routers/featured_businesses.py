@@ -223,6 +223,77 @@ def toggle_featured(
     }
 
 
+@admin_router.put("/{business_id}")
+def update_featured_business(
+    business_id: int,
+    body: CreateFeaturedRequest,
+    db: Session = Depends(get_db_session),
+    _admin: User = Depends(require_admin),
+):
+    profile = db.execute(
+        select(BizProfile).where(BizProfile.id == business_id)
+    ).scalars().first()
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Business not found.")
+
+    existing = db.execute(
+        select(BizProfile).where(BizProfile.slug == body.slug, BizProfile.id != business_id)
+    ).scalars().first()
+    if existing:
+        raise HTTPException(status_code=400, detail="A business with this slug already exists.")
+
+    profile.category_id = body.category_id
+    profile.business_name = body.business_name
+    profile.slug = body.slug
+    profile.description = body.description
+    profile.address = body.address
+    profile.city = body.city
+    profile.state = body.state
+    profile.country = body.country
+    profile.pincode = body.pincode
+    profile.phone = body.phone
+    profile.email = body.email
+    profile.website = body.website
+    profile.logo_url = body.logo_url
+    profile.cover_image_url = body.cover_image_url
+    profile.profile_type = body.profile_type
+    if body.featured_order is not None:
+        profile.featured_order = body.featured_order
+
+    db.commit()
+    db.refresh(profile)
+
+    return {
+        "id": profile.id,
+        "business_name": profile.business_name,
+        "slug": profile.slug,
+        "is_featured": profile.is_featured,
+        "featured_order": profile.featured_order,
+        "message": "Business updated successfully.",
+    }
+
+
+@admin_router.delete("/{business_id}")
+def delete_featured_business(
+    business_id: int,
+    db: Session = Depends(get_db_session),
+    _admin: User = Depends(require_admin),
+):
+    profile = db.execute(
+        select(BizProfile).where(BizProfile.id == business_id)
+    ).scalars().first()
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Business not found.")
+
+    profile.is_featured = False
+    profile.featured_order = None
+    db.commit()
+
+    return {"message": "Business removed from featured."}
+
+
 @admin_router.post("")
 def create_featured_business(
     body: CreateFeaturedRequest,

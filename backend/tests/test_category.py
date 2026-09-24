@@ -3,12 +3,13 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, StaticPool
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.database import Base, get_db
+from app.database import Base
+from app.dependencies.database import get_db_session
 from app.main import app
 from app.models.role import Role, RoleEnum
 from app.models.user import User
@@ -17,7 +18,11 @@ from app.services.password import hash_password
 
 @pytest.fixture(scope="module")
 def engine():
-    eng = create_engine("sqlite:///:memory:")
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(eng)
     yield eng
     eng.dispose()
@@ -25,14 +30,10 @@ def engine():
 
 @pytest.fixture()
 def db(engine):
-    connection = engine.connect()
-    transaction = connection.begin()
-    Session = sessionmaker(bind=connection)
+    Session = sessionmaker(bind=engine)
     session = Session()
     yield session
     session.close()
-    transaction.rollback()
-    connection.close()
 
 
 @pytest.fixture()
@@ -42,13 +43,13 @@ def client(db, set_env):
         SECRET_KEY="test-secret-key-for-testing-only",
     )
 
-    def override_get_db():
+    def override_get_db_session():
         try:
             yield db
         finally:
             pass
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_db_session] = override_get_db_session
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -56,30 +57,38 @@ def client(db, set_env):
 
 @pytest.fixture()
 def admin_role(db):
-    role = Role(name=RoleEnum.ADMIN.value, description="Administrator")
-    db.add(role)
-    db.commit()
-    db.refresh(role)
+    role = db.query(Role).filter(Role.name == RoleEnum.ADMIN.value).first()
+    if not role:
+        role = Role(name=RoleEnum.ADMIN.value, description="Administrator")
+        db.add(role)
+        db.commit()
+        db.refresh(role)
     return role
 
 
 @pytest.fixture()
 def user_role(db):
-    role = Role(name=RoleEnum.USER.value, description="Standard user")
-    db.add(role)
-    db.commit()
-    db.refresh(role)
+    role = db.query(Role).filter(Role.name == RoleEnum.USER.value).first()
+    if not role:
+        role = Role(name=RoleEnum.USER.value, description="Standard user")
+        db.add(role)
+        db.commit()
+        db.refresh(role)
     return role
 
 
 @pytest.fixture()
 def admin_user(db, admin_role):
+    existing = db.query(User).filter(User.email == "admin@example.com").first()
+    if existing:
+        return existing
     user = User(
         role_id=admin_role.id,
         full_name="Admin User",
         email="admin@example.com",
         password_hash=hash_password("AdminPass123!"),
         is_active=True,
+        is_email_verified=True,
     )
     db.add(user)
     db.commit()
@@ -89,12 +98,16 @@ def admin_user(db, admin_role):
 
 @pytest.fixture()
 def regular_user(db, user_role):
+    existing = db.query(User).filter(User.email == "user@example.com").first()
+    if existing:
+        return existing
     user = User(
         role_id=user_role.id,
         full_name="Regular User",
         email="user@example.com",
         password_hash=hash_password("UserPass123!"),
         is_active=True,
+        is_email_verified=True,
     )
     db.add(user)
     db.commit()
@@ -200,7 +213,7 @@ class TestAdminCategories:
             "/api/admin/categories",
             json={"name": "Hacked", "slug": "hacked"},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 401
 
     def test_update_category(self, client, admin_user):
         token = _admin_token(client, admin_user)

@@ -24,13 +24,13 @@ def get_dashboard_stats(
     customers = db.execute(
         select(func.count(User.id))
         .join(Role)
-        .where(Role.name == "CUSTOMER")
+        .where(Role.name.in_(["BUYER", "CUSTOMER"]))
     ).scalar() or 0
 
     end_users = db.execute(
         select(func.count(User.id))
         .join(Role)
-        .where(Role.name == "ENDUSER")
+        .where(Role.name.in_(["SELLER", "ENDUSER"]))
     ).scalar() or 0
 
     admins = db.execute(

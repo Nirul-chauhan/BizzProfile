@@ -24,6 +24,18 @@ class Settings(BaseSettings):
 
     # --- OTP ---
     OTP_EXPIRE_MINUTES: int = 5
+    OTP_RATE_LIMIT: int = 3
+    OTP_RATE_WINDOW_MINUTES: int = 10
+
+    # --- SMS Provider ---
+    SMS_PROVIDER: str = "console"  # console | twilio | fast2sms
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+    FAST2SMS_API_KEY: str = ""
+
+    # --- Signup Token ---
+    SIGNUP_TOKEN_EXPIRE_MINUTES: int = 15
 
     # --- CORS ---
     CORS_ORIGINS: str = "http://localhost:5173"

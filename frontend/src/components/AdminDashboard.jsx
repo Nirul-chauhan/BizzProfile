@@ -1,9 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { updateProfile, uploadProfilePic, removeProfilePic, adminListBusinesses, adminToggleFeatured, adminCreateFeaturedBusiness, getCategories } from "../api";
+import { updateProfile, uploadProfilePic, removeProfilePic, adminListBusinesses, adminToggleFeatured, adminCreateFeaturedBusiness, adminUpdateFeaturedBusiness, adminDeleteFeaturedBusiness, getCategories } from "../api";
 import SearchableSelect from "./SearchableSelect";
 import CategoryManagement from "./CategoryManagement";
 import SubcategoryManagement from "./SubcategoryManagement";
+import BannerManagement from "./BannerManagement";
+import BestSellerManagement from "./BestSellerManagement";
+import AdminEnquiries from "./AdminEnquiries";
+import TrendingCategoryManagement from "./TrendingCategoryManagement";
+import TrendingProductManagement from "./TrendingProductManagement";
+import TrendingVideoManagement from "./TrendingVideoManagement";
+import AdminServiceManagement from "./AdminServiceManagement";
 import { COUNTRIES, getStatesForCountry, getCitiesForState } from "./locationData";
 import ImageCropModal from "./ImageCropModal";
 import {
@@ -30,6 +37,12 @@ import {
   Plus,
   ExternalLink,
   X,
+  Image,
+  Play,
+  Briefcase,
+  Pencil,
+  Trash2,
+  MessageSquare,
 } from "lucide-react";
 
 const NAV = [
@@ -41,6 +54,13 @@ const NAV = [
   { id: "subcategories", icon: FolderOpen, label: "Subcategories" },
   { id: "businesses", icon: Building2, label: "Businesses" },
   { id: "featured", icon: Star, label: "Featured" },
+  { id: "banners", icon: Image, label: "Banners" },
+  { id: "trending-videos", icon: Play, label: "Trending Videos" },
+  { id: "services", icon: Briefcase, label: "Services" },
+  { id: "best-sellers", icon: Star, label: "Best Sellers" },
+  { id: "enquiries", icon: MessageSquare, label: "Enquiries" },
+  { id: "trending-products", icon: TrendingUp, label: "Trending Products" },
+  { id: "trending-categories", icon: TrendingUp, label: "Trending Categories" },
   { id: "documents", icon: FileText, label: "Documents" },
   { id: "verification", icon: ShieldCheck, label: "Verification" },
 ];
@@ -80,6 +100,11 @@ export default function AdminDashboard() {
   const [verifyingProfile, setVerifyingProfile] = useState(null);
   const [verifyingDoc, setVerifyingDoc] = useState(null);
 
+  // Documents
+  const [documentsList, setDocumentsList] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsFilter, setDocumentsFilter] = useState("ALL");
+
   // Featured businesses
   const [featuredList, setFeaturedList] = useState([]);
   const [featuredLoading, setFeaturedLoading] = useState(false);
@@ -103,6 +128,9 @@ export default function AdminDashboard() {
   });
   const [createFeaturedLoading, setCreateFeaturedLoading] = useState(false);
   const [createFeaturedMsg, setCreateFeaturedMsg] = useState("");
+  const [editingFeatured, setEditingFeatured] = useState(null);
+  const [editFeaturedMsg, setEditFeaturedMsg] = useState("");
+  const [editFeaturedLoading, setEditFeaturedLoading] = useState(false);
 
   // Businesses section
   const [businessList, setBusinessList] = useState([]);
@@ -167,7 +195,10 @@ export default function AdminDashboard() {
     if (activeNav === "verification") {
       fetchVerificationData();
     }
-  }, [activeNav, featuredFilter]);
+    if (activeNav === "documents") {
+      fetchDocumentsList();
+    }
+  }, [activeNav, featuredFilter, documentsFilter]);
 
   const fetchDashboardData = async () => {
     try {
@@ -183,8 +214,8 @@ export default function AdminDashboard() {
         fetch("/api/admin/dashboard/stats", { headers }),
         fetch("/api/admin/dashboard/activity?limit=10", { headers }),
         fetch("/api/admin/users?role=USER", { headers }),
-        fetch("/api/admin/users?role=CUSTOMER", { headers }),
-        fetch("/api/admin/users?role=ENDUSER", { headers }),
+        fetch("/api/admin/users?role=BUYER", { headers }),
+        fetch("/api/admin/users?role=SELLER", { headers }),
         fetch("/api/admin/featured-businesses?page_size=100", { headers }),
       ]);
 
@@ -198,37 +229,24 @@ export default function AdminDashboard() {
         setActivities(activityData.activities || []);
       }
 
-      if (usersRes.ok) {
-        setUsersList(await usersRes.json());
-      }
-
-      if (customersRes.ok) {
-        setCustomersList(await customersRes.json());
-      }
-
       const notifs = [];
-      if (usersRes.ok) {
-        const uData = await usersRes.json();
-        setUsersList(uData);
-        uData.slice(0, 5).forEach((user) => {
-          notifs.push({ id: `user-${user.id}`, type: "user", title: "New User Registered", name: user.full_name, email: user.email, time: user.created_at || "Recently" });
-        });
-      }
-      if (customersRes.ok) {
-        const cData = await customersRes.json();
-        setCustomersList(cData);
-        cData.slice(0, 5).forEach((user) => {
-          notifs.push({ id: `cust-${user.id}`, type: "customer", title: "New Customer Joined", name: user.full_name, email: user.email, time: user.created_at || "Recently" });
-        });
-      }
+      const usersData = usersRes.ok ? await usersRes.json() : [];
+      const customersData = customersRes.ok ? await customersRes.json() : [];
+      const endUsersData = endUsersRes.ok ? await endUsersRes.json() : [];
 
-      if (endUsersRes.ok) {
-        const eData = await endUsersRes.json();
-        setEndUsersList(eData);
-        eData.slice(0, 5).forEach((user) => {
-          notifs.push({ id: `end-${user.id}`, type: "enduser", title: "New End User Joined", name: user.full_name, email: user.email, time: user.created_at || "Recently" });
-        });
-      }
+      setUsersList(usersData);
+      setCustomersList(customersData);
+      setEndUsersList(endUsersData);
+
+      usersData.slice(0, 5).forEach((u) => {
+        notifs.push({ id: `user-${u.id}`, type: "user", title: "New User Registered", name: u.full_name, email: u.email, time: u.created_at || "Recently" });
+      });
+      customersData.slice(0, 5).forEach((u) => {
+        notifs.push({ id: `cust-${u.id}`, type: "customer", title: "New Customer Joined", name: u.full_name, email: u.email, time: u.created_at || "Recently" });
+      });
+      endUsersData.slice(0, 5).forEach((u) => {
+        notifs.push({ id: `end-${u.id}`, type: "enduser", title: "New End User Joined", name: u.full_name, email: u.email, time: u.created_at || "Recently" });
+      });
       setNotifications(notifs.slice(0, 15));
 
       if (featuredRes.ok) {
@@ -259,6 +277,21 @@ export default function AdminDashboard() {
       if (profilesRes.ok) setPendingProfiles(await profilesRes.json());
       if (docsRes.ok) setPendingDocuments(await docsRes.json());
     } catch (err) { console.error("Failed to fetch verification data:", err); }
+  };
+
+  const fetchDocumentsList = async () => {
+    setDocumentsLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { Authorization: `Bearer ${token}` };
+      const statusParam = documentsFilter !== "ALL" ? `?verification_status=${documentsFilter}` : "";
+      const res = await fetch(`/api/admin/documents${statusParam}&page_size=100`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setDocumentsList(Array.isArray(data) ? data : data.items || []);
+      }
+    } catch (err) { console.error("Failed to fetch documents:", err); }
+    finally { setDocumentsLoading(false); }
   };
 
   const handleVerifyProfile = async (profileId, isVerified) => {
@@ -294,6 +327,20 @@ export default function AdminDashboard() {
       }
     } catch (err) { console.error("Failed to verify document:", err); }
     finally { setVerifyingDoc(null); }
+  };
+
+  const handleToggleUserActive = async (userId, isActive) => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/admin/users/${userId}/active`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: isActive }),
+      });
+      if (res.ok) {
+        fetchDashboardData();
+      }
+    } catch (err) { console.error("Failed to toggle user status:", err); }
   };
 
   const fetchFeaturedBusinesses = async () => {
@@ -436,6 +483,47 @@ export default function AdminDashboard() {
       setCreateFeaturedMsg(err.message || "Failed to create featured business");
     } finally {
       setCreateFeaturedLoading(false);
+    }
+  };
+
+  const handleEditFeatured = async () => {
+    if (!editingFeatured) return;
+    setEditFeaturedLoading(true);
+    setEditFeaturedMsg("");
+    try {
+      await adminUpdateFeaturedBusiness(editingFeatured.id, {
+        business_name: editingFeatured.business_name,
+        slug: editingFeatured.slug,
+        category_id: parseInt(editingFeatured.category_id),
+        description: editingFeatured.description || null,
+        address: editingFeatured.address || null,
+        city: editingFeatured.city || null,
+        state: editingFeatured.state || null,
+        country: editingFeatured.country || null,
+        phone: editingFeatured.phone || null,
+        email: editingFeatured.email || null,
+        website: editingFeatured.website || null,
+        logo_url: editingFeatured.logo_url || null,
+        cover_image_url: editingFeatured.cover_image_url || null,
+        profile_type: editingFeatured.profile_type || "COMPANY",
+      });
+      setEditFeaturedMsg("Business updated successfully!");
+      fetchFeaturedBusinesses();
+      setTimeout(() => { setEditingFeatured(null); setEditFeaturedMsg(""); }, 1200);
+    } catch (err) {
+      setEditFeaturedMsg(err.message || "Failed to update business");
+    } finally {
+      setEditFeaturedLoading(false);
+    }
+  };
+
+  const handleDeleteFeatured = async (businessId) => {
+    if (!confirm("Remove this business from featured?")) return;
+    try {
+      await adminDeleteFeaturedBusiness(businessId);
+      setFeaturedList((prev) => prev.filter((b) => b.id !== businessId));
+    } catch (err) {
+      console.error("Failed to remove featured:", err);
     }
   };
 
@@ -821,14 +909,14 @@ export default function AdminDashboard() {
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200/60">
-                        {["Name", "Email", "Mobile", "City", "Status", "Joined"].map((h) => (
+                        {["Name", "Email", "Mobile", "City", "Status", "Joined", "Actions"].map((h) => (
                           <th key={h} className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200/60">
                       {usersList.length === 0 ? (
-                        <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-500">No users found</td></tr>
+                        <tr><td colSpan="7" className="px-6 py-12 text-center text-gray-500">No users found</td></tr>
                       ) : (
                         usersList.map((u) => (
                           <tr key={u.id} className="hover:bg-gray-50/50 transition-colors">
@@ -849,6 +937,12 @@ export default function AdminDashboard() {
                               </span>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                            <td className="px-6 py-4">
+                              <button onClick={() => handleToggleUserActive(u.id, !u.is_active)}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer border-none ${u.is_active ? "bg-rose-50 text-rose-600 hover:bg-rose-100" : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"}`}>
+                                {u.is_active ? "Deactivate" : "Activate"}
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -869,14 +963,14 @@ export default function AdminDashboard() {
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200/60">
-                        {["Name", "Email", "Mobile", "City", "State", "Status", "Joined"].map((h) => (
+                        {["Name", "Email", "Mobile", "City", "State", "Status", "Joined", "Actions"].map((h) => (
                           <th key={h} className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200/60">
                       {customersList.length === 0 ? (
-                        <tr><td colSpan="7" className="px-6 py-12 text-center text-gray-500">No customers found</td></tr>
+                        <tr><td colSpan="8" className="px-6 py-12 text-center text-gray-500">No customers found</td></tr>
                       ) : (
                         customersList.map((u) => (
                           <tr key={u.id} className="hover:bg-gray-50/50 transition-colors">
@@ -898,6 +992,12 @@ export default function AdminDashboard() {
                               </span>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                            <td className="px-6 py-4">
+                              <button onClick={() => handleToggleUserActive(u.id, !u.is_active)}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer border-none ${u.is_active ? "bg-rose-50 text-rose-600 hover:bg-rose-100" : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"}`}>
+                                {u.is_active ? "Deactivate" : "Activate"}
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -918,14 +1018,14 @@ export default function AdminDashboard() {
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200/60">
-                        {["Name", "Email", "Mobile", "City", "State", "Status", "Joined"].map((h) => (
+                        {["Name", "Email", "Mobile", "City", "State", "Status", "Joined", "Actions"].map((h) => (
                           <th key={h} className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200/60">
                       {endUsersList.length === 0 ? (
-                        <tr><td colSpan="7" className="px-6 py-12 text-center text-gray-500">No end users found</td></tr>
+                        <tr><td colSpan="8" className="px-6 py-12 text-center text-gray-500">No end users found</td></tr>
                       ) : (
                         endUsersList.map((u) => (
                           <tr key={u.id} className="hover:bg-gray-50/50 transition-colors">
@@ -947,6 +1047,12 @@ export default function AdminDashboard() {
                               </span>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                            <td className="px-6 py-4">
+                              <button onClick={() => handleToggleUserActive(u.id, !u.is_active)}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer border-none ${u.is_active ? "bg-rose-50 text-rose-600 hover:bg-rose-100" : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"}`}>
+                                {u.is_active ? "Deactivate" : "Activate"}
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -1402,6 +1508,20 @@ export default function AdminDashboard() {
                                 >
                                   {b.is_featured ? "Remove" : "Feature"}
                                 </button>
+                                <button
+                                  onClick={() => setEditingFeatured({ ...b, category_id: b.category?.id || "" })}
+                                  className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors cursor-pointer border-none bg-transparent"
+                                  title="Edit"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteFeatured(b.id)}
+                                  className="p-1.5 text-gray-400 hover:text-red-500 transition-colors cursor-pointer border-none bg-transparent"
+                                  title="Remove from featured"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                                 <a
                                   href={`/enduser/business/${b.slug}`}
                                   target="_blank"
@@ -1546,25 +1666,179 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               )}
+
+              {/* Edit Featured Modal */}
+              {editingFeatured && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+                    <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-white">Edit Featured Business</h3>
+                        <p className="text-sm text-blue-100">Update business details and images</p>
+                      </div>
+                      <button onClick={() => { setEditingFeatured(null); setEditFeaturedMsg(""); }} className="p-2 hover:bg-white/20 rounded-xl cursor-pointer border-none bg-transparent">
+                        <X className="w-5 h-5 text-white" />
+                      </button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                      {editFeaturedMsg && (
+                        <div className={`p-3 rounded-xl text-sm text-center ${editFeaturedMsg.includes("success") ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{editFeaturedMsg}</div>
+                      )}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Business Name *</label>
+                          <input type="text" value={editingFeatured.business_name} onChange={(e) => setEditingFeatured({ ...editingFeatured, business_name: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Slug *</label>
+                          <input type="text" value={editingFeatured.slug} onChange={(e) => setEditingFeatured({ ...editingFeatured, slug: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-gray-700 mb-1">Category *</label>
+                        <select value={editingFeatured.category_id} onChange={(e) => setEditingFeatured({ ...editingFeatured, category_id: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                          <option value="">Select category</option>
+                          {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-gray-700 mb-1">Description</label>
+                        <textarea value={editingFeatured.description || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, description: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" rows={2} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">City</label>
+                          <input type="text" value={editingFeatured.city || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, city: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">State</label>
+                          <input type="text" value={editingFeatured.state || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, state: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Phone</label>
+                          <input type="text" value={editingFeatured.phone || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, phone: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Email</label>
+                          <input type="email" value={editingFeatured.email || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, email: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-gray-700 mb-1">Website</label>
+                        <input type="url" value={editingFeatured.website || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, website: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="https://..." />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Logo URL</label>
+                          <input type="url" value={editingFeatured.logo_url || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, logo_url: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="https://...logo.png" />
+                          {editingFeatured.logo_url && (<img src={editingFeatured.logo_url} alt="Logo preview" className="mt-2 h-10 w-10 rounded-lg object-cover border" />)}
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Cover Image URL</label>
+                          <input type="url" value={editingFeatured.cover_image_url || ""} onChange={(e) => setEditingFeatured({ ...editingFeatured, cover_image_url: e.target.value })} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="https://...cover.jpg" />
+                          {editingFeatured.cover_image_url && (<img src={editingFeatured.cover_image_url} alt="Cover preview" className="mt-2 h-10 w-20 rounded-lg object-cover border" />)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-3 p-4 border-t border-gray-200 bg-gray-50">
+                      <button onClick={() => { setEditingFeatured(null); setEditFeaturedMsg(""); }} className="flex-1 py-3 bg-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-300 transition-colors cursor-pointer border-none">Cancel</button>
+                      <button onClick={handleEditFeatured} disabled={!editingFeatured.business_name?.trim() || !editingFeatured.slug?.trim() || !editingFeatured.category_id || editFeaturedLoading} className="flex-1 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-colors cursor-pointer border-none disabled:opacity-40">
+                        {editFeaturedLoading ? "Saving..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+          ) : activeNav === "banners" ? (
+            <BannerManagement />
+          ) : activeNav === "trending-videos" ? (
+            <TrendingVideoManagement />
+          ) : activeNav === "services" ? (
+            <AdminServiceManagement />
+          ) : activeNav === "best-sellers" ? (
+            <BestSellerManagement />
+          ) : activeNav === "enquiries" ? (
+            <AdminEnquiries />
+          ) : activeNav === "trending-products" ? (
+            <TrendingProductManagement />
+          ) : activeNav === "trending-categories" ? (
+            <TrendingCategoryManagement />
           ) : activeNav === "documents" ? (
             <div>
-              <h3 className="text-xl font-bold text-gray-900 mb-6">Documents</h3>
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold text-gray-900">Documents</h3>
+                <div className="flex gap-2">
+                  {["ALL", "PENDING", "APPROVED", "REJECTED"].map((f) => (
+                    <button key={f} onClick={() => setDocumentsFilter(f)}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer border-none ${documentsFilter === f ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200/60">
-                        {["Document", "Type", "Profile", "Status", "Uploaded"].map((h) => (
+                        {["Document", "Type", "Profile", "Status", "Uploaded", "Actions"].map((h) => (
                           <th key={h} className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200/60">
-                      <tr><td colSpan="5" className="px-6 py-12 text-center text-gray-400">
-                        <FileText className="w-10 h-10 mx-auto mb-3 opacity-50" />
-                        <p className="font-medium">No documents uploaded yet</p>
-                      </td></tr>
+                      {documentsLoading ? (
+                        <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-400">
+                          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                          <p className="font-medium">Loading documents...</p>
+                        </td></tr>
+                      ) : documentsList.length === 0 ? (
+                        <tr><td colSpan="6" className="px-6 py-12 text-center text-gray-400">
+                          <FileText className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                          <p className="font-medium">No documents found</p>
+                        </td></tr>
+                      ) : documentsList.map((doc) => (
+                        <tr key={doc.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-purple-50 rounded-xl flex items-center justify-center">
+                                <FileText className="w-5 h-5 text-purple-500" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-gray-900">{doc.file_name}</p>
+                                <p className="text-xs text-gray-500">{(doc.file_size / 1024).toFixed(1)} KB</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4"><span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-lg font-medium">{doc.document_type}</span></td>
+                          <td className="px-6 py-4 text-sm text-gray-700">Profile #{doc.profile_id}</td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${doc.verification_status === "APPROVED" ? "bg-emerald-100 text-emerald-700" : doc.verification_status === "REJECTED" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                              {doc.verification_status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">{doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              {doc.verification_status === "PENDING" && (
+                                <>
+                                  <button onClick={() => handleVerifyDocument(doc.id, "APPROVED")} disabled={verifyingDoc === doc.id}
+                                    className="px-3 py-1.5 bg-emerald-500 text-white text-xs font-bold rounded-lg hover:bg-emerald-600 transition-colors cursor-pointer border-none disabled:opacity-50">
+                                    {verifyingDoc === doc.id ? "..." : "Approve"}
+                                  </button>
+                                  <button onClick={() => { const r = prompt("Rejection reason (optional):"); if (r !== null) handleVerifyDocument(doc.id, "REJECTED", r); }} disabled={verifyingDoc === doc.id}
+                                    className="px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 transition-colors cursor-pointer border-none disabled:opacity-50">
+                                    Reject
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -1677,20 +1951,72 @@ export default function AdminDashboard() {
           ) : activeNav === "settings" ? (
             <div className="max-w-2xl mx-auto">
               <h3 className="text-xl font-bold text-gray-900 mb-6">Settings</h3>
-              <div className="bg-white border border-gray-200/60 rounded-2xl p-6 space-y-6">
-                <div>
-                  <h4 className="text-sm font-bold text-gray-900 mb-2">Account</h4>
-                  <p className="text-sm text-gray-500">Manage your account settings and preferences.</p>
+              
+              {/* Account Info */}
+              <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden mb-6">
+                <div className="p-5 border-b border-gray-200/60 bg-gradient-to-r from-gray-700 to-gray-800">
+                  <h4 className="text-sm font-bold text-white">Account Settings</h4>
+                  <p className="text-xs text-gray-300">Manage your personal information</p>
                 </div>
-                <div className="border-t border-gray-200 pt-6">
-                  <h4 className="text-sm font-bold text-gray-900 mb-2">Danger Zone</h4>
-                  <button
-                    onClick={handleLogout}
-                    className="px-4 py-2 bg-red-50 text-red-600 font-bold text-sm rounded-xl hover:bg-red-100 transition-colors cursor-pointer border-none"
-                  >
-                    Logout
-                  </button>
+                <div className="p-6 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Full Name</label>
+                      <input type="text" value={user?.full_name || ""} readOnly
+                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Email</label>
+                      <input type="email" value={user?.email || ""} readOnly
+                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Role</label>
+                      <input type="text" value="Administrator" readOnly
+                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Phone</label>
+                      <input type="tel" value={user?.mobile || ""} readOnly
+                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm" />
+                    </div>
+                  </div>
                 </div>
+              </div>
+
+              {/* Platform Stats Summary */}
+              <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden mb-6">
+                <div className="p-5 border-b border-gray-200/60 bg-gradient-to-r from-blue-500 to-indigo-600">
+                  <h4 className="text-sm font-bold text-white">Platform Overview</h4>
+                </div>
+                <div className="p-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="text-center p-3 bg-gray-50 rounded-xl">
+                    <p className="text-2xl font-extrabold text-blue-600">{stats?.total_users || 0}</p>
+                    <p className="text-xs text-gray-500 font-medium mt-1">Total Users</p>
+                  </div>
+                  <div className="text-center p-3 bg-gray-50 rounded-xl">
+                    <p className="text-2xl font-extrabold text-emerald-600">{stats?.total_profiles || 0}</p>
+                    <p className="text-xs text-gray-500 font-medium mt-1">Businesses</p>
+                  </div>
+                  <div className="text-center p-3 bg-gray-50 rounded-xl">
+                    <p className="text-2xl font-extrabold text-purple-600">{stats?.total_products || 0}</p>
+                    <p className="text-xs text-gray-500 font-medium mt-1">Products</p>
+                  </div>
+                  <div className="text-center p-3 bg-gray-50 rounded-xl">
+                    <p className="text-2xl font-extrabold text-amber-600">{stats?.total_services || 0}</p>
+                    <p className="text-xs text-gray-500 font-medium mt-1">Services</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Danger Zone */}
+              <div className="bg-white border border-red-200/60 rounded-2xl p-6">
+                <h4 className="text-sm font-bold text-red-700 mb-2">Danger Zone</h4>
+                <p className="text-sm text-gray-500 mb-4">Once you logout, you will need to log in again.</p>
+                <button onClick={handleLogout}
+                  className="px-4 py-2 bg-red-50 text-red-600 font-bold text-sm rounded-xl hover:bg-red-100 transition-colors cursor-pointer border-none">
+                  Logout
+                </button>
               </div>
             </div>
           ) : (

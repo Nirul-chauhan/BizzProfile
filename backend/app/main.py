@@ -22,6 +22,22 @@ from app.routers.admin_dashboard import router as admin_dashboard_router
 from app.routers.public_profile import router as public_profile_router
 from app.routers.featured_businesses import router as featured_router
 from app.routers.featured_businesses import admin_router as admin_featured_router
+from app.routers.seller import router as seller_router
+from app.routers.buyer import router as buyer_router
+from app.routers.banner import router as banner_router
+from app.routers.society import router as society_router
+from app.routers.lead import router as lead_router
+from app.routers.trending_video import router as trending_video_router
+from app.routers.public_services import router as public_services_router
+from app.routers.public_products import router as public_products_router
+from app.routers.admin_best_sellers import router as admin_best_sellers_router
+from app.routers.admin_trending_products import router as admin_trending_products_router
+from app.routers.admin_services import router as admin_services_router
+from app.routers.public_services_listing import router as public_services_listing_router
+from app.routers.admin_services_listing import router as admin_services_listing_router
+from app.routers.admin_enquiries import router as admin_enquiries_router
+from app.routers.services_listing import router as services_listing_router
+from app.routers.admin_enquiries import router as admin_enquiries_router
 
 settings = get_settings()
 
@@ -58,6 +74,21 @@ app.include_router(admin_dashboard_router)
 app.include_router(public_profile_router)
 app.include_router(featured_router)
 app.include_router(admin_featured_router)
+app.include_router(seller_router)
+app.include_router(buyer_router)
+app.include_router(banner_router)
+app.include_router(society_router)
+app.include_router(lead_router)
+app.include_router(trending_video_router)
+app.include_router(public_services_router)
+app.include_router(public_products_router)
+app.include_router(admin_best_sellers_router)
+app.include_router(admin_trending_products_router)
+app.include_router(admin_services_router)
+app.include_router(public_services_listing_router)
+app.include_router(admin_services_listing_router)
+app.include_router(services_listing_router)
+app.include_router(admin_enquiries_router)
 
 import os
 from pathlib import Path

@@ -496,7 +496,7 @@ export default function CustomerDashboard() {
             </h2>
             <p className="text-xs text-gray-500">
               {user?.full_name || "Customer"}
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-bold ml-1.5">CUSTOMER</span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-bold ml-1.5">BUYER</span>
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -530,7 +530,7 @@ export default function CustomerDashboard() {
                     <div className="px-4 py-2 border-b border-gray-100">
                       <p className="text-sm font-bold text-gray-900">{user?.full_name}</p>
                       <p className="text-xs text-gray-500">{user?.email}</p>
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-bold">CUSTOMER</span>
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-bold">BUYER</span>
                     </div>
                     <button
                       onClick={() => { setActiveNav("account"); setShowProfileMenu(false); }}
@@ -700,7 +700,7 @@ export default function CustomerDashboard() {
                     <div>
                       <p className="text-sm font-bold text-gray-900 mb-1">Profile Picture</p>
                       <p className="text-xs text-gray-500 mb-1">JPG, PNG or WebP. Max 5MB.</p>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold mb-3">CUSTOMER PORTAL</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold mb-3">BUYER PORTAL</span>
                       <div className="flex items-center gap-2">
                         <label className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white text-sm font-bold rounded-xl hover:bg-blue-600 transition-colors cursor-pointer">
                           <Camera className="w-4 h-4" />

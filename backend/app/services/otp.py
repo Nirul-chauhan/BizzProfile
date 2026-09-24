@@ -2,7 +2,7 @@ import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -89,10 +89,14 @@ class OtpService:
             Otp.is_verified == False,  # noqa: E712
             Otp.expires_at > datetime.now(timezone.utc),
         ]
+        identifier_matches = []
         if email:
-            conditions.append(Otp.email == email)
+            identifier_matches.append(Otp.email == email)
         if mobile:
-            conditions.append(Otp.mobile == mobile)
+            identifier_matches.append(Otp.mobile == mobile)
+        if not identifier_matches:
+            raise ValueError("No verification identifier provided.")
+        conditions.append(or_(*identifier_matches))
 
         otp = self.db.execute(
             select(Otp).where(*conditions)

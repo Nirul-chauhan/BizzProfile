@@ -204,3 +204,9 @@ BizProfile.documents: Mapped[list["Document"]] = relationship(
     cascade="all, delete-orphan",
     passive_deletes=True,
 )
+BizProfile.reviews: Mapped[list["Review"]] = relationship(
+    "Review",
+    back_populates="biz_profile",
+    cascade="all, delete-orphan",
+    passive_deletes=True,
+)

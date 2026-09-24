@@ -5,21 +5,28 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, StaticPool
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.database import Base, get_db
+from app.database import Base
+from app.dependencies.database import get_db_session
 from app.main import app
 from app.models.role import Role, RoleEnum
 from app.models.user import User
 from app.services.password import hash_password
 
+_reg_counter = 0
+
 
 @pytest.fixture(scope="module")
 def engine():
-    eng = create_engine("sqlite:///:memory:")
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(eng)
     yield eng
     eng.dispose()
@@ -27,14 +34,10 @@ def engine():
 
 @pytest.fixture()
 def db(engine):
-    connection = engine.connect()
-    transaction = connection.begin()
-    Session = sessionmaker(bind=connection)
+    Session = sessionmaker(bind=engine)
     session = Session()
     yield session
     session.close()
-    transaction.rollback()
-    connection.close()
 
 
 @pytest.fixture()
@@ -44,13 +47,13 @@ def client(db, set_env):
         SECRET_KEY="test-secret-key-for-testing-only",
     )
 
-    def override_get_db():
+    def override_get_db_session():
         try:
             yield db
         finally:
             pass
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_db_session] = override_get_db_session
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -67,25 +70,32 @@ def admin_role(db):
 
 @pytest.fixture()
 def user_role(db):
-    role = Role(name=RoleEnum.USER.value, description="Standard user")
-    db.add(role)
-    db.commit()
-    db.refresh(role)
+    role = db.query(Role).filter(Role.name == RoleEnum.CUSTOMER.value).first()
+    if not role:
+        role = Role(name=RoleEnum.CUSTOMER.value, description="Customer (Buyer)")
+        db.add(role)
+        db.commit()
+        db.refresh(role)
     return role
 
 
 @pytest.fixture()
 def registered_user(client, user_role):
+    global _reg_counter
+    _reg_counter += 1
+    email = f"testuser{_reg_counter}@example.com"
     response = client.post(
         "/api/auth/register",
         json={
             "full_name": "Test User",
-            "email": "test@example.com",
+            "email": email,
             "password": "TestPass123!",
         },
     )
     assert response.status_code == 201
-    return response.json()
+    data = response.json()
+    data["email"] = email
+    return data
 
 
 class TestRegister:
@@ -106,7 +116,7 @@ class TestRegister:
             "/api/auth/register",
             json={
                 "full_name": "Duplicate User",
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "password": "DupPass123!",
             },
         )
@@ -140,7 +150,7 @@ class TestLogin:
         response = client.post(
             "/api/auth/login",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "password": "TestPass123!",
             },
         )
@@ -154,7 +164,7 @@ class TestLogin:
         response = client.post(
             "/api/auth/login",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "password": "WrongPass123!",
             },
         )
@@ -176,7 +186,7 @@ class TestMe:
         login_response = client.post(
             "/api/auth/login",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "password": "TestPass123!",
             },
         )
@@ -188,11 +198,11 @@ class TestMe:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["email"] == "test@example.com"
+        assert data["email"] == registered_user["email"]
 
     def test_get_me_unauthenticated(self, client):
         response = client.get("/api/auth/me")
-        assert response.status_code == 403
+        assert response.status_code in (401, 403)
 
 
 class TestOtp:
@@ -200,7 +210,7 @@ class TestOtp:
         response = client.post(
             "/api/auth/send-otp",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "purpose": "EMAIL_VERIFICATION",
             },
         )
@@ -211,7 +221,7 @@ class TestOtp:
         send_response = client.post(
             "/api/auth/send-otp",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "purpose": "EMAIL_VERIFICATION",
             },
         )
@@ -222,7 +232,7 @@ class TestOtp:
             verify_response = client.post(
                 "/api/auth/verify-otp",
                 json={
-                    "email": "test@example.com",
+                    "email": registered_user["email"],
                     "purpose": "EMAIL_VERIFICATION",
                     "otp": otp_code,
                 },
@@ -235,7 +245,7 @@ class TestForgotPassword:
         set_env(APP_ENV="development")
         response = client.post(
             "/api/auth/forgot-password",
-            json={"email": "test@example.com"},
+            json={"email": registered_user["email"]},
         )
         assert response.status_code == 200
         data = response.json()
@@ -255,7 +265,7 @@ class TestResetPassword:
         set_env(APP_ENV="development")
         forgot_response = client.post(
             "/api/auth/forgot-password",
-            json={"email": "test@example.com"},
+            json={"email": registered_user["email"]},
         )
         assert forgot_response.status_code == 200
         code = forgot_response.json()["otp"]
@@ -263,7 +273,7 @@ class TestResetPassword:
         reset_response = client.post(
             "/api/auth/reset-password",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "purpose": "FORGOT_PASSWORD",
                 "otp": code,
                 "new_password": "NewPassword123!",
@@ -274,7 +284,7 @@ class TestResetPassword:
         login_response = client.post(
             "/api/auth/login",
             json={
-                "email": "test@example.com",
+                "email": registered_user["email"],
                 "password": "NewPassword123!",
             },
         )

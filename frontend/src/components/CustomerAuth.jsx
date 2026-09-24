@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   Store,
   User,
@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import SearchableSelect from "./SearchableSelect";
 import { COUNTRIES, getCitiesForState, getStatesForCountry } from "./locationData";
-import { sendOtp, verifyOtp, register, login as loginApi, forgotPassword, resetPassword } from "../api";
+import { sendOtp, verifyOtp, register, forgotPassword, resetPassword } from "../api";
+import { useAuth } from "../context/AuthContext";
 
 function OtpInput({ value, onChange, onSubmit }) {
   const refs = useRef(Array(6).fill(null));
@@ -61,6 +62,9 @@ function OtpInput({ value, onChange, onSubmit }) {
 
 export default function CustomerAuth() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login: authLogin } = useAuth();
+  const redirectTo = location.state?.from?.pathname || "/buyer/dashboard";
   const [mode, setMode] = useState("register");
   const [showPassword, setShowPassword] = useState(false);
 
@@ -145,6 +149,9 @@ export default function CustomerAuth() {
     setLoading(true);
     setError("");
     try {
+      // Step 1: Verify OTP first
+      await verifyOtp({ email, mobile, otp, purpose: "MOBILE_VERIFICATION" });
+      // Step 2: Register account after OTP verification
       await register({
         full_name: fullName,
         email,
@@ -153,18 +160,12 @@ export default function CustomerAuth() {
         city,
         state,
         country,
-        role: "CUSTOMER",
+        role: "BUYER",
       });
-      try {
-        await verifyOtp({ email, mobile, otp, purpose: "MOBILE_VERIFICATION" });
-      } catch (otpErr) {
-        // OTP verification is optional since register already sets verified flags
-      }
-      const result = await loginApi({ email, password });
-      localStorage.setItem("token", result.access_token);
-      localStorage.setItem("user", JSON.stringify(result.user));
+      // Step 3: Auto-login
+      await authLogin({ email, password });
       setOtpVerified(true);
-      setTimeout(() => navigate("/customer/dashboard"), 500);
+      setTimeout(() => navigate(redirectTo), 500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -177,10 +178,8 @@ export default function CustomerAuth() {
     setLoading(true);
     setError("");
     try {
-      const result = await loginApi({ email: loginEmail, password: loginPassword });
-      localStorage.setItem("token", result.access_token);
-      localStorage.setItem("user", JSON.stringify(result.user));
-      navigate("/customer/dashboard");
+      await authLogin({ email: loginEmail, password: loginPassword });
+      navigate(redirectTo);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -265,12 +264,12 @@ export default function CustomerAuth() {
               <Store className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-3xl font-extrabold text-gray-900 mb-2">
-              {mode === "register" ? "Create Customer Account" : "Welcome Back"}
+              {mode === "register" ? "Join as Buyer" : "Welcome Back"}
             </h2>
             <p className="text-gray-500">
               {mode === "register"
-                ? "Register to list your business"
-                : "Login to your customer account"}
+                ? "Create your account to discover businesses and services"
+                : "Login to your buyer account"}
             </p>
           </div>
 
@@ -389,11 +388,16 @@ export default function CustomerAuth() {
                   </button>
                 </div>
               )}
-              <div className="mt-8 text-center">
+              <div className="mt-8 text-center space-y-2">
                 <p className="text-sm text-gray-500">
                   Already have an account?{" "}
                   <button onClick={() => { setMode("login"); setOtpSent(false); setOtp(""); setOtpVerified(false); }}
                     className="text-emerald-600 font-bold hover:text-emerald-700 cursor-pointer border-none bg-transparent">Login</button>
+                </p>
+                <p className="text-sm text-gray-500">
+                  Want to join as Admin?{" "}
+                  <button onClick={() => navigate("/auth/admin")}
+                    className="text-blue-600 font-bold hover:text-blue-700 cursor-pointer border-none bg-transparent">Admin Login</button>
                 </p>
               </div>
             </>
@@ -439,11 +443,16 @@ export default function CustomerAuth() {
                   <>Login to Customer Dashboard <ArrowRight className="w-5 h-5" /></>
                 )}
               </button>
-              <div className="mt-8 text-center">
+              <div className="mt-8 text-center space-y-2">
                 <p className="text-sm text-gray-500">
-                  Don't have an account?{" "}
+                  Don&apos;t have an account?{" "}
                   <button onClick={() => { setMode("register"); setLoginEmail(""); setLoginPassword(""); }}
                     className="text-emerald-600 font-bold hover:text-emerald-700 cursor-pointer border-none bg-transparent">Register</button>
+                </p>
+                <p className="text-sm text-gray-500">
+                  Want to join as Admin?{" "}
+                  <button onClick={() => navigate("/auth/admin")}
+                    className="text-blue-600 font-bold hover:text-blue-700 cursor-pointer border-none bg-transparent">Admin Login</button>
                 </p>
               </div>
             </div>

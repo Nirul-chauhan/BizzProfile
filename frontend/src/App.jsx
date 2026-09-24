@@ -1,22 +1,31 @@
 import { Routes, Route, Outlet, Navigate } from "react-router-dom";
 import Header from "./components/Header";
 import PublicView from "./components/PublicView";
+import AuthLanding from "./components/AuthLanding";
 import AdminAuth from "./components/AdminAuth";
 import CustomerAuth from "./components/CustomerAuth";
 import EndUserAuth from "./components/EndUserAuth";
 import AdminDashboard from "./components/AdminDashboard";
 import CustomerForm from "./components/CustomerForm";
 import CustomerDashboard from "./components/CustomerDashboard";
+import BuyerDashboard from "./components/BuyerDashboard";
+import SellerDashboard from "./components/SellerDashboard";
 import EndUserView from "./components/EndUserView";
 import BusinessDetail from "./components/BusinessDetail";
 import BusinessDirectory from "./components/BusinessDirectory";
+import ProductDetailPage from "./components/ProductDetailPage";
+import ServiceDetailPage from "./components/ServiceDetailPage";
+import ServicesCategoryPage from "./components/ServicesCategoryPage";
+import CategoryPage, { SubcategoryPage } from "./components/CategoryPage";
+import SearchResults from "./components/SearchResults";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ProtectedRoute from "./components/auth/ProtectedRoute";
 
 function Layout() {
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Header />
-      <main className="flex-1 pt-20">
+      <main className="flex-1 pt-28 lg:pt-28">
         <Outlet />
       </main>
     </div>
@@ -56,22 +65,7 @@ function ContactThankYou() {
 }
 
 function LoginSignup() {
-  return (
-    <div className="max-w-md mx-auto py-20 px-4">
-      <h1 className="text-3xl font-bold text-center mb-8">Login / Register</h1>
-      <div className="space-y-4">
-        <a href="/auth/admin" className="block p-6 bg-white border border-gray-200 rounded-2xl hover:shadow-lg transition-all no-underline text-center">
-          <h3 className="font-bold text-gray-900">Admin</h3>
-        </a>
-        <a href="/auth/customer" className="block p-6 bg-white border border-gray-200 rounded-2xl hover:shadow-lg transition-all no-underline text-center">
-          <h3 className="font-bold text-gray-900">Customer</h3>
-        </a>
-        <a href="/auth/enduser" className="block p-6 bg-white border border-gray-200 rounded-2xl hover:shadow-lg transition-all no-underline text-center">
-          <h3 className="font-bold text-gray-900">End User</h3>
-        </a>
-      </div>
-    </div>
-  );
+  return <AuthLanding />;
 }
 
 function CustomerSections() {
@@ -94,8 +88,20 @@ export default function App() {
           <Route path="/contact/thank-you" element={<ContactThankYou />} />
           <Route path="/features" element={<Navigate to="/#section-about" replace />} />
           <Route path="/businesses" element={<BusinessDirectory />} />
+          <Route path="/search" element={<SearchResults />} />
+          <Route path="/categories" element={<CategoryPage />} />
+          <Route path="/categories/:categorySlug" element={<CategoryPage />} />
+          <Route path="/categories/:categorySlug/:subcategorySlug" element={<SubcategoryPage />} />
+          <Route path="/products/:id" element={<ProductDetailPage />} />
+          <Route path="/services" element={<ServicesCategoryPage />} />
+          <Route path="/services/:categorySlug" element={<ServicesCategoryPage />} />
+          <Route path="/services/:categorySlug/:subcategorySlug" element={<ServicesCategoryPage />} />
+          <Route path="/services/:id" element={<ServiceDetailPage />} />
+          <Route path="/services/detail/:slug" element={<ServiceDetailPage />} />
           <Route path="/login" element={<LoginSignup />} />
           <Route path="/auth/admin" element={<AdminAuth />} />
+          <Route path="/auth/buyer" element={<CustomerAuth />} />
+          <Route path="/auth/seller" element={<EndUserAuth />} />
           <Route path="/auth/customer" element={<CustomerAuth />} />
           <Route path="/auth/enduser" element={<EndUserAuth />} />
           <Route path="/blogs" element={<Navigate to="/#section-blogs" replace />} />
@@ -108,6 +114,10 @@ export default function App() {
         <Route path="/customer/dashboard" element={<CustomerDashboard />} />
         <Route path="/customer/dashboard/:section" element={<CustomerDashboard />} />
         <Route path="/customer/form" element={<CustomerForm />} />
+        <Route path="/buyer/dashboard" element={<BuyerDashboard />} />
+        <Route path="/buyer/dashboard/:section" element={<BuyerDashboard />} />
+        <Route path="/seller/dashboard" element={<ProtectedRoute allowedRoles={["SELLER", "ENDUSER"]}><SellerDashboard /></ProtectedRoute>} />
+        <Route path="/seller/dashboard/:section" element={<ProtectedRoute allowedRoles={["SELLER", "ENDUSER"]}><SellerDashboard /></ProtectedRoute>} />
         <Route path="/enduser" element={<EndUserView />} />
         <Route path="/enduser/business/:slug" element={<BusinessDetail />} />
       </Routes>

@@ -14,6 +14,9 @@ class Category(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("categories.id", ondelete="CASCADE"), nullable=True
+    )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     slug: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -21,6 +24,8 @@ class Category(Base):
     icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_popular: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_trending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    trending_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
@@ -32,6 +37,12 @@ class Category(Base):
         nullable=False,
     )
 
+    parent: Mapped["Category | None"] = relationship(
+        "Category", remote_side="Category.id", back_populates="children"
+    )
+    children: Mapped[list["Category"]] = relationship(
+        "Category", back_populates="parent", cascade="all, delete-orphan"
+    )
     subcategories: Mapped[list["Subcategory"]] = relationship(
         "Subcategory", back_populates="category", cascade="all, delete-orphan"
     )

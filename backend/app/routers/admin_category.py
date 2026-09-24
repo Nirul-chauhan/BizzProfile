@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies.auth import require_admin
 from app.dependencies.database import get_db_session
-from app.models.category import Subcategory
+from app.models.category import Category, Subcategory
 from app.models.user import User
 from app.schemas.category import (
     CategoryCreate,
@@ -28,7 +29,7 @@ def list_categories(
     _admin: User = Depends(require_admin),
 ):
     svc = CategoryService(db)
-    categories = svc.get_categories()
+    categories = svc.get_categories(include_inactive=True)
     return [CategoryResponse.model_validate(c) for c in categories]
 
 
@@ -41,6 +42,7 @@ def create_category(
     svc = CategoryService(db)
     try:
         category = svc.create_category(
+            parent_id=request.parent_id,
             name=request.name,
             slug=request.slug,
             description=request.description,
@@ -49,6 +51,8 @@ def create_category(
             logo_url=request.logo_url,
             is_popular=request.is_popular,
             sort_order=request.sort_order,
+            is_trending=request.is_trending,
+            trending_order=request.trending_order,
         )
     except CategoryError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -66,6 +70,7 @@ def update_category(
     try:
         category = svc.update_category(
             category_id,
+            parent_id=request.parent_id,
             name=request.name,
             slug=request.slug,
             description=request.description,
@@ -74,6 +79,8 @@ def update_category(
             logo_url=request.logo_url,
             is_popular=request.is_popular,
             sort_order=request.sort_order,
+            is_trending=request.is_trending,
+            trending_order=request.trending_order,
         )
     except CategoryError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -207,3 +214,61 @@ async def upload_category_logo(
     db.commit()
     db.refresh(category)
     return CategoryResponse.model_validate(category)
+
+
+# ---------------------------------------------------------------------------
+# Trending Categories
+# ---------------------------------------------------------------------------
+
+class ToggleTrendingRequest(BaseModel):
+    is_trending: bool
+
+
+class UpdateTrendingOrderRequest(BaseModel):
+    trending_order: int
+
+
+@router.get("/trending-categories", response_model=list[CategoryResponse])
+def list_trending_categories(
+    db: Session = Depends(get_db_session),
+    _admin: User = Depends(require_admin),
+):
+    q = (
+        select(Category)
+        .where(Category.is_trending == True)
+        .order_by(Category.trending_order.asc(), Category.name.asc())
+    )
+    cats = db.execute(q).scalars().all()
+    return [CategoryResponse.model_validate(c) for c in cats]
+
+
+@router.patch("/categories/{category_id}/trending")
+def toggle_trending(
+    category_id: int,
+    data: ToggleTrendingRequest,
+    db: Session = Depends(get_db_session),
+    _admin: User = Depends(require_admin),
+):
+    cat = db.get(Category, category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    cat.is_trending = data.is_trending
+    if not data.is_trending:
+        cat.trending_order = 0
+    db.commit()
+    return {"ok": True, "is_trending": cat.is_trending}
+
+
+@router.patch("/categories/{category_id}/trending-order")
+def update_trending_order(
+    category_id: int,
+    data: UpdateTrendingOrderRequest,
+    db: Session = Depends(get_db_session),
+    _admin: User = Depends(require_admin),
+):
+    cat = db.get(Category, category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    cat.trending_order = data.trending_order
+    db.commit()
+    return {"ok": True, "trending_order": cat.trending_order}

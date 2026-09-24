@@ -65,7 +65,7 @@ export default function EndUserView() {
   const [profileMessage, setProfileMessage] = useState("");
 
   const roleName = user ? (typeof user.role === "string" ? user.role : user.role?.name) : null;
-  const displayRole = roleName === "ENDUSER" ? "USER" : roleName === "ADMIN" ? "ADMIN" : roleName === "CUSTOMER" ? "CUSTOMER" : "";
+  const displayRole = roleName === "SELLER" || roleName === "ENDUSER" ? "USER" : roleName === "ADMIN" ? "ADMIN" : roleName === "BUYER" || roleName === "CUSTOMER" ? "BUYER" : "";
 
   useEffect(() => {
     const stored = localStorage.getItem("user");

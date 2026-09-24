@@ -29,7 +29,7 @@ class AdminUserResponse(BaseModel):
 
 
 class AdminUserUpdateRole(BaseModel):
-    role_name: str = Field(..., pattern=r"^(ADMIN|USER)$")
+    role_name: str = Field(..., pattern=r"^(ADMIN|BUYER|SELLER|USER)$")
 
 
 class AdminUserToggleActive(BaseModel):

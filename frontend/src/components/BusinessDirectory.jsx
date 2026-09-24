@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Search,
   MapPin,
@@ -54,12 +54,13 @@ const CATEGORY_TEXT = {
 };
 
 export default function BusinessDirectory() {
+  const [searchParams] = useSearchParams();
   const [businesses, setBusinesses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState([]);
 
   // Filter states
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedCountry, setSelectedCountry] = useState("");
   const [selectedState, setSelectedState] = useState("");
@@ -68,8 +69,15 @@ export default function BusinessDirectory() {
   const [showCityDropdown, setShowCityDropdown] = useState(false);
 
   useEffect(() => {
-    loadBusinesses();
+    const urlQ = searchParams.get("q");
+    if (urlQ) {
+      setSearchQuery(urlQ);
+      loadBusinesses({ q: urlQ });
+    } else {
+      loadBusinesses();
+    }
     loadCategories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadBusinesses = async (params = {}) => {

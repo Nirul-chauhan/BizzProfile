@@ -9,9 +9,12 @@ from app.database import Base
 
 class RoleEnum(str, enum.Enum):
     ADMIN = "ADMIN"
-    CUSTOMER = "CUSTOMER"
-    ENDUSER = "ENDUSER"
+    BUYER = "BUYER"
+    SELLER = "SELLER"
     USER = "USER"
+    # Backward compat aliases
+    CUSTOMER = "BUYER"
+    ENDUSER = "SELLER"
 
 
 class Role(Base):

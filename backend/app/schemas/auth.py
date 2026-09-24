@@ -17,7 +17,7 @@ class RegisterRequest(BaseModel):
     state: str | None = Field(None, max_length=100)
     country: str | None = Field(None, max_length=100)
     password: str = Field(..., min_length=8, max_length=128)
-    role: str = Field(default="USER", max_length=50)
+    role: str = Field(default="BUYER", max_length=50)
 
     @field_validator("email")
     @classmethod
@@ -25,6 +25,15 @@ class RegisterRequest(BaseModel):
         if not _EMAIL_RE.match(v):
             raise ValueError("Invalid email format.")
         return v
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        allowed = {"BUYER", "SELLER"}
+        normalized = v.upper()
+        if normalized not in allowed:
+            raise ValueError(f"Invalid role. Allowed: {', '.join(sorted(allowed))}")
+        return normalized
 
 
 class SendOtpRequest(BaseModel):
@@ -110,6 +119,10 @@ class UpdateProfileRequest(BaseModel):
     country: str | None = Field(None, max_length=100)
 
 
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 # ---- Response Schemas ----
 
 
@@ -132,6 +145,7 @@ class UserResponse(BaseModel):
     is_email_verified: bool
     is_mobile_verified: bool
     is_active: bool
+    is_first_login: bool = False
     role: RoleInfo
     created_at: datetime
 
@@ -151,3 +165,33 @@ class MessageResponse(BaseModel):
 class DevOtpResponse(BaseModel):
     message: str
     otp: str
+
+
+# ---- Phone OTP Auth Flow ----
+
+
+class PhoneOtpRequest(BaseModel):
+    phone: str = Field(..., min_length=10, max_length=15, pattern=r"^\+?\d{10,15}$")
+
+
+class PhoneOtpVerifyRequest(BaseModel):
+    phone: str = Field(..., min_length=10, max_length=15, pattern=r"^\+?\d{10,15}$")
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class SignupCompleteRequest(BaseModel):
+    signup_token: str
+    name: str = Field(..., min_length=1, max_length=150)
+    role: str = Field(default="BUYER", max_length=50)
+    society_id: int | None = None
+    block_tower: str | None = Field(None, max_length=50)
+    flat_number: str | None = Field(None, max_length=20)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        allowed = {"BUYER", "SELLER"}
+        normalized = v.upper()
+        if normalized not in allowed:
+            raise ValueError(f"Invalid role. Allowed: {', '.join(sorted(allowed))}")
+        return normalized
