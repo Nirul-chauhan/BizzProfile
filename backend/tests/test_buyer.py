@@ -43,6 +43,50 @@ from app.services.password import hash_password
 
 _buyer_counter = 0
 _seller_counter = 0
+_admin_counter = 0
+
+
+def _admin_email():
+    global _admin_counter
+    _admin_counter += 1
+    return f"admin{_admin_counter}@test.com"
+
+
+def _create_admin(db):
+    _ensure_roles(db)
+    role = db.query(Role).filter(Role.name == "ADMIN").first()
+    email = _admin_email()
+    user = User(
+        role_id=role.id,
+        full_name=f"Admin {email.split('@')[0]}",
+        email=email,
+        password_hash=hash_password(_TEST_PASSWORD),
+        is_email_verified=True,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _approve_product(client, db, product_id):
+    """New seller listings start as DRAFT and must be approved by an admin
+    before buyers can enquire about them."""
+    admin = _create_admin(db)
+    token = _register_and_login(client, admin.email, role="ADMIN")
+    return client.patch(
+        f"/api/admin/products/{product_id}/approve", headers=_auth_header(token)
+    )
+
+
+def _approve_service(client, db, service_id):
+    """Services follow the same draft-then-approval flow as products."""
+    admin = _create_admin(db)
+    token = _register_and_login(client, admin.email, role="ADMIN")
+    return client.patch(
+        f"/api/admin/services/{service_id}/approve", headers=_auth_header(token)
+    )
 
 
 def _buyer_email():
@@ -105,7 +149,7 @@ def client(db, set_env):
 # ---------------------------------------------------------------------------
 
 def _ensure_roles(db):
-    for name in ["ADMIN", "CUSTOMER", "ENDUSER", "USER"]:
+    for name in ["ADMIN", "BUYER", "SELLER", "USER"]:
         if not db.query(Role).filter(Role.name == name).first():
             db.add(Role(name=name, description=f"{name} role"))
     db.commit()
@@ -136,7 +180,7 @@ _TEST_PASSWORD = "TestPass123!"
 
 def _create_buyer(db, email):
     _ensure_roles(db)
-    role = db.query(Role).filter(Role.name == "CUSTOMER").first()
+    role = db.query(Role).filter(Role.name == "BUYER").first()
     user = User(
         role_id=role.id,
         full_name=f"Buyer {email.split('@')[0]}",
@@ -153,7 +197,7 @@ def _create_buyer(db, email):
 
 def _create_seller(db, email):
     _ensure_roles(db)
-    role = db.query(Role).filter(Role.name == "ENDUSER").first()
+    role = db.query(Role).filter(Role.name == "SELLER").first()
     user = User(
         role_id=role.id,
         full_name=f"Seller {email.split('@')[0]}",
@@ -168,7 +212,7 @@ def _create_seller(db, email):
     return user
 
 
-def _register_and_login(client, email, role="CUSTOMER", password=_TEST_PASSWORD):
+def _register_and_login(client, email, role="BUYER", password=_TEST_PASSWORD):
     client.post(
         "/api/auth/register",
         json={
@@ -234,7 +278,7 @@ class TestBuyerDashboard:
         # Create seller profile + product
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -245,6 +289,7 @@ class TestBuyerDashboard:
             headers=_auth_header(seller_token),
         )
         product_id = product_resp.json()["id"]
+        _approve_product(client, db, product_id)
 
         # Create requirement
         client.post(
@@ -289,7 +334,7 @@ class TestBuyerDashboard:
     def test_seller_cannot_access_buyer_dashboard(self, client, db):
         email = _seller_email()
         _create_seller(db, email)
-        token = _register_and_login(client, email, role="ENDUSER")
+        token = _register_and_login(client, email, role="SELLER")
 
         resp = client.get("/api/buyer/dashboard", headers=_auth_header(token))
         assert resp.status_code == 403
@@ -341,7 +386,7 @@ class TestBuyerProfile:
     def test_seller_cannot_access_buyer_profile(self, client, db):
         email = _seller_email()
         _create_seller(db, email)
-        token = _register_and_login(client, email, role="ENDUSER")
+        token = _register_and_login(client, email, role="SELLER")
 
         resp = client.get("/api/buyer/profile", headers=_auth_header(token))
         assert resp.status_code == 403
@@ -519,7 +564,7 @@ class TestBuyerEnquiries:
         cat = _ensure_category(db, "Electronics", "electronics2")
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -530,6 +575,7 @@ class TestBuyerEnquiries:
             headers=_auth_header(seller_token),
         )
         product_id = product_resp.json()["id"]
+        _approve_product(client, db, product_id)
         return seller, profile_id, product_id
 
     def test_create_enquiry_for_product(self, client, db):
@@ -557,7 +603,7 @@ class TestBuyerEnquiries:
         cat = _ensure_category(db, "Consulting", "consulting")
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -568,6 +614,7 @@ class TestBuyerEnquiries:
             headers=_auth_header(seller_token),
         )
         service_id = service_resp.json()["id"]
+        _approve_service(client, db, service_id)
 
         resp = client.post(
             "/api/buyer/enquiries",
@@ -598,7 +645,7 @@ class TestBuyerEnquiries:
         cat = _ensure_category(db, "Gadgets", "gadgets")
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -683,7 +730,7 @@ class TestBuyerFavorites:
         cat = _ensure_category(db, "Toys", "toys")
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -694,6 +741,7 @@ class TestBuyerFavorites:
             headers=_auth_header(seller_token),
         )
         product_id = product_resp.json()["id"]
+        _approve_product(client, db, product_id)
         return profile_id, product_id
 
     def test_add_favorite_product(self, client, db):
@@ -827,7 +875,7 @@ class TestBuyerQuotations:
         cat = _ensure_category(db, "Home", "home")
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -838,6 +886,7 @@ class TestBuyerQuotations:
             headers=_auth_header(seller_token),
         )
         product_id = product_resp.json()["id"]
+        _approve_product(client, db, product_id)
 
         # Buyer creates enquiry
         enquiry_resp = client.post(
@@ -977,7 +1026,7 @@ class TestBuyerMessages:
 
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        _register_and_login(client, seller_email, role="ENDUSER")
+        _register_and_login(client, seller_email, role="SELLER")
 
         resp = client.post(
             "/api/buyer/messages",
@@ -1022,7 +1071,7 @@ class TestBuyerMessages:
 
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        _register_and_login(client, seller_email, role="ENDUSER")
+        _register_and_login(client, seller_email, role="SELLER")
 
         # Send a message
         client.post(
@@ -1044,7 +1093,7 @@ class TestBuyerMessages:
 
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        _register_and_login(client, seller_email, role="ENDUSER")
+        _register_and_login(client, seller_email, role="SELLER")
 
         client.post(
             "/api/buyer/messages",
@@ -1065,7 +1114,7 @@ class TestBuyerMessages:
 
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
 
         # Seller sends to buyer
         client.post(
@@ -1094,7 +1143,7 @@ class TestBuyerMessages:
 
         seller_email = _seller_email()
         seller = _create_seller(db, seller_email)
-        _register_and_login(client, seller_email, role="ENDUSER")
+        _register_and_login(client, seller_email, role="SELLER")
 
         for i in range(5):
             client.post(
@@ -1115,12 +1164,12 @@ class TestBuyerMessages:
 
         seller_email = _seller_email()
         _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
 
         # Seller sends to another seller
         seller2_email = _seller_email()
         seller2 = _create_seller(db, seller2_email)
-        seller2_token = _register_and_login(client, seller2_email, role="ENDUSER")
+        seller2_token = _register_and_login(client, seller2_email, role="SELLER")
 
         client.post(
             "/api/seller/messages",
@@ -1142,7 +1191,7 @@ class TestBuyerAuthorization:
     def test_seller_cannot_access_buyer_endpoints(self, client, db):
         email = _seller_email()
         _create_seller(db, email)
-        token = _register_and_login(client, email, role="ENDUSER")
+        token = _register_and_login(client, email, role="SELLER")
 
         endpoints = [
             ("GET", "/api/buyer/dashboard"),
@@ -1185,7 +1234,7 @@ class TestBuyerFavoritesDashboard:
         cat = _ensure_category(db, "Books", "books")
         seller_email = _seller_email()
         _create_seller(db, seller_email)
-        seller_token = _register_and_login(client, seller_email, role="ENDUSER")
+        seller_token = _register_and_login(client, seller_email, role="SELLER")
         _create_seller_profile(client, seller_token, cat.id)
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(seller_token))
         profile_id = profile_resp.json()["id"]
@@ -1196,6 +1245,7 @@ class TestBuyerFavoritesDashboard:
             headers=_auth_header(seller_token),
         )
         product_id = product_resp.json()["id"]
+        _approve_product(client, db, product_id)
 
         # Add 2 favorites
         client.post(

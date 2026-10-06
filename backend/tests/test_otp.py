@@ -64,18 +64,18 @@ def user(db, role):
 class TestOtpGeneration:
     def test_generate_returns_code_and_otp(self, db):
         svc = OtpService(db)
-        code, otp = svc.generate("test@example.com", OtpPurpose.REGISTRATION)
+        code, otp = svc.generate("test@example.com", purpose=OtpPurpose.REGISTRATION)
         assert len(code) == 6
         assert code.isdigit()
-        assert otp.destination == "test@example.com"
+        assert otp.email == "test@example.com"
         assert otp.purpose == OtpPurpose.REGISTRATION.value
         assert otp.is_verified is False
         assert otp.attempt_count == 0
-        assert otp.expires_at > datetime.now(timezone.utc)
+        assert otp.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc)
 
     def test_otp_code_is_plaintext(self, db):
         svc = OtpService(db)
-        code, otp = svc.generate("test@example.com", OtpPurpose.LOGIN)
+        code, otp = svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
         assert otp.otp_code == code
         assert len(otp.otp_code) == 6
         assert otp.otp_code.isdigit()
@@ -83,89 +83,108 @@ class TestOtpGeneration:
     def test_generate_with_user_id(self, db, user):
         svc = OtpService(db)
         code, otp = svc.generate(
-            "test@example.com", OtpPurpose.LOGIN, user_id=user.id
+            "test@example.com", purpose=OtpPurpose.LOGIN, user_id=user.id
         )
         assert otp.user_id == user.id
 
     def test_generate_stores_in_database(self, db):
         svc = OtpService(db)
-        code, otp = svc.generate("test@example.com", OtpPurpose.REGISTRATION)
+        code, otp = svc.generate("test@example.com", purpose=OtpPurpose.REGISTRATION)
         from sqlalchemy import select
 
         stored = db.execute(select(Otp).where(Otp.id == otp.id)).scalars().first()
         assert stored is not None
         assert stored.otp_code == code
 
-    def test_generate_limits_active_otps(self, db):
+    def test_regenerate_replaces_previous_otp(self, db):
+        """Regenerating for the same email+purpose supersedes the old code.
+
+        generate() prunes unverified OTPs matching the same email/mobile and
+        purpose, so only the newest code stays usable. The MAX_ACTIVE_OTPS
+        guard in the service can therefore never be reached for a single
+        recipient; it is kept only as defence in depth.
+        """
         svc = OtpService(db)
-        for _ in range(MAX_ACTIVE_OTPS):
-            svc.generate("test@example.com", OtpPurpose.REGISTRATION)
-        with pytest.raises(ValueError, match="Too many active OTPs"):
-            svc.generate("test@example.com", OtpPurpose.REGISTRATION)
+        first_code, first_otp = svc.generate(
+            "test@example.com", purpose=OtpPurpose.REGISTRATION
+        )
+        for _ in range(MAX_ACTIVE_OTPS + 2):
+            svc.generate("test@example.com", purpose=OtpPurpose.REGISTRATION)
+
+        active = (
+            db.query(Otp)
+            .filter_by(email="test@example.com", purpose=OtpPurpose.REGISTRATION.value)
+            .all()
+        )
+        assert len(active) == 1
+        with pytest.raises(ValueError):
+            svc.verify(
+                "test@example.com", purpose=OtpPurpose.REGISTRATION, code=first_code
+            )
 
 
 class TestOtpVerification:
     def test_verify_success(self, db):
         svc = OtpService(db)
-        code, otp = svc.generate("test@example.com", OtpPurpose.LOGIN)
-        verified = svc.verify("test@example.com", OtpPurpose.LOGIN, code)
+        code, otp = svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
+        verified = svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code=code)
         assert verified.is_verified is True
 
     def test_verify_wrong_code(self, db):
         svc = OtpService(db)
-        svc.generate("test@example.com", OtpPurpose.LOGIN)
+        svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
         with pytest.raises(ValueError, match="Invalid OTP"):
-            svc.verify("test@example.com", OtpPurpose.LOGIN, "000000")
+            svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code="000000")
 
     def test_verify_increments_attempt_count(self, db):
         svc = OtpService(db)
-        svc.generate("test@example.com", OtpPurpose.LOGIN)
+        svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
         with pytest.raises(ValueError):
-            svc.verify("test@example.com", OtpPurpose.LOGIN, "000000")
-        otp = db.query(Otp).filter_by(destination="test@example.com").first()
+            svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code="000000")
+        otp = db.query(Otp).filter_by(email="test@example.com").first()
         assert otp.attempt_count == 1
 
     def test_verify_rejects_after_max_attempts(self, db):
         svc = OtpService(db)
-        svc.generate("test@example.com", OtpPurpose.LOGIN)
+        svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
         for _ in range(MAX_ATTEMPTS):
             with pytest.raises(ValueError):
-                svc.verify("test@example.com", OtpPurpose.LOGIN, "000000")
+                svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code="000000")
         with pytest.raises(ValueError, match="attempts exceeded"):
-            svc.verify("test@example.com", OtpPurpose.LOGIN, "000000")
+            svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code="000000")
 
     def test_verified_otp_not_reusable(self, db):
         svc = OtpService(db)
-        code, _ = svc.generate("test@example.com", OtpPurpose.LOGIN)
-        svc.verify("test@example.com", OtpPurpose.LOGIN, code)
+        code, _ = svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
+        svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code=code)
         with pytest.raises(ValueError, match="Invalid or expired OTP"):
-            svc.verify("test@example.com", OtpPurpose.LOGIN, code)
+            svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code=code)
 
 
 class TestOtpExpiration:
     def test_expired_otp_rejected(self, db):
         svc = OtpService(db)
-        code, otp = svc.generate("test@example.com", OtpPurpose.LOGIN)
+        code, otp = svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
         otp.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         db.commit()
         with pytest.raises(ValueError, match="Invalid or expired OTP"):
-            svc.verify("test@example.com", OtpPurpose.LOGIN, code)
+            svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code=code)
 
     def test_is_verified_false_for_expired(self, db):
         svc = OtpService(db)
-        assert svc.is_verified("nonexistent@example.com", OtpPurpose.LOGIN) is False
+        assert svc.is_verified("nonexistent@example.com", purpose=OtpPurpose.LOGIN) is False
 
 
 class TestOtpIsVerified:
     def test_is_verified_returns_true(self, db):
         svc = OtpService(db)
-        code, _ = svc.generate("test@example.com", OtpPurpose.LOGIN)
-        svc.verify("test@example.com", OtpPurpose.LOGIN, code)
-        assert svc.is_verified("test@example.com", OtpPurpose.LOGIN) is True
+        code, _ = svc.generate("test@example.com", purpose=OtpPurpose.LOGIN)
+        svc.verify("test@example.com", purpose=OtpPurpose.LOGIN, code=code)
+        assert svc.is_verified("test@example.com", purpose=OtpPurpose.LOGIN) is True
 
     def test_is_verified_returns_false(self, db):
         svc = OtpService(db)
-        assert svc.is_verified("test@example.com", OtpPurpose.LOGIN) is False
+        assert svc.is_verified("test@example.com", purpose=OtpPurpose.LOGIN) is False
 
 
 class TestOtpPurposeEnum:

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Phone, ArrowLeft, UserCheck, Briefcase, ShieldCheck } from "lucide-react";
+import { setAuthToken } from "../api";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
@@ -88,6 +89,7 @@ export default function PhoneAuthModal({ isOpen, onClose }) {
       } else {
         localStorage.setItem("token", data.access_token);
         localStorage.setItem("user", JSON.stringify(data.user));
+        setAuthToken(data.access_token);
         onClose();
         const roleName = data.user.role?.name;
         if (roleName === "ADMIN") navigate("/admin/dashboard");
@@ -123,6 +125,7 @@ export default function PhoneAuthModal({ isOpen, onClose }) {
       if (!res.ok) throw new Error(extractError(data));
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("user", JSON.stringify(data.user));
+      setAuthToken(data.access_token);
       onClose();
       if (role === "ADMIN") navigate("/admin/dashboard");
       else if (role === "BUYER") navigate("/buyer/dashboard");

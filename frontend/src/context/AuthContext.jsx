@@ -1,5 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { login as apiLogin, register as apiRegister, getMe } from "../api";
+import {
+  login as apiLogin,
+  register as apiRegister,
+  getMe,
+  setAuthToken,
+  AUTH_EXPIRED_EVENT,
+} from "../api";
 
 const AuthContext = createContext(null);
 
@@ -19,6 +25,7 @@ export function AuthProvider({ children }) {
     if (storedToken && storedUser) {
       try {
         const parsed = JSON.parse(storedUser);
+        setAuthToken(storedToken);
         setToken(storedToken);
         setUser(parsed);
       } catch {
@@ -29,12 +36,38 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
+  // A 401 anywhere in the app invalidates the session. Clear it here too so
+  // isAuthenticated can never stay true after the token is gone.
+  useEffect(() => {
+    const onExpired = () => {
+      setAuthToken(null);
+      setToken(null);
+      setUser(null);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, []);
+
+  // Sign out when another tab signs out.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === STORAGE_KEY_TOKEN && !e.newValue) {
+        setAuthToken(null);
+        setToken(null);
+        setUser(null);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const login = useCallback(async ({ email, password }) => {
     const data = await apiLogin({ email, password });
     const { access_token, user: userData } = data;
 
     localStorage.setItem(STORAGE_KEY_TOKEN, access_token);
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(userData));
+    setAuthToken(access_token);
     setToken(access_token);
     setUser(userData);
     return userData;
@@ -60,6 +93,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY_TOKEN);
     localStorage.removeItem(STORAGE_KEY_USER);
+    setAuthToken(null);
     setToken(null);
     setUser(null);
   }, []);

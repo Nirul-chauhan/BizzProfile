@@ -68,9 +68,18 @@ class BizService(Base):
         Integer, ForeignKey("users.id"), nullable=True
     )
     approval_status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=ServiceApprovalStatus.APPROVED.value
+        String(20), nullable=False, default=ServiceApprovalStatus.PENDING.value
     )
     rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
+    )
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_trending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -96,7 +105,12 @@ class BizService(Base):
     subcategory: Mapped["Subcategory | None"] = relationship(
         "Subcategory", passive_deletes=True
     )
-    added_by_user: Mapped["User | None"] = relationship("User", passive_deletes=True)
+    added_by_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys="BizService.added_by_user_id", passive_deletes=True
+    )
+    reviewed_by_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys="BizService.reviewed_by_user_id", passive_deletes=True
+    )
 
     def __repr__(self) -> str:
         return f"<BizService(id={self.id}, name='{self.name}')>"

@@ -88,6 +88,7 @@ def admin_user(db, admin_role):
         full_name="Admin User",
         email="admin@example.com",
         password_hash=hash_password("AdminPass123!"),
+        is_email_verified=True,
         is_active=True,
     )
     db.add(user)
@@ -103,6 +104,7 @@ def user_one(db, user_role):
         full_name="User One",
         email="user1@example.com",
         password_hash=hash_password("User1Pass123!"),
+        is_email_verified=True,
         is_active=True,
     )
     db.add(user)
@@ -118,6 +120,7 @@ def user_two(db, user_role):
         full_name="User Two",
         email="user2@example.com",
         password_hash=hash_password("User2Pass123!"),
+        is_email_verified=True,
         is_active=True,
     )
     db.add(user)

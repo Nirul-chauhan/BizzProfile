@@ -173,70 +173,35 @@ export default function MegaMenu() {
         </div>
       )}
 
-      {/* Mobile — accordion list */}
+      {/* Mobile / tablet — horizontally scrolling category strip.
+          This replaced a vertical accordion that could never be seen: the bar
+          that hosts this component was `hidden lg:block`, so below `lg` there
+          was no category navigation anywhere. A single scrollable row also
+          keeps the fixed header a predictable height. Each chip lands on the
+          category page, which lists its sub-groups, subcategories and
+          businesses. */}
       <div className="lg:hidden">
-        {categories.map((cat) => {
-          const hasDropdown =
-            (cat.children && cat.children.length > 0) ||
-            (cat.subcategories && cat.subcategories.length > 0);
-          const isOpen = openCategory === cat.id;
-          return (
-            <div key={cat.id} className="border-b border-gray-100 last:border-0">
-              <div className="flex items-center">
-                <Link
-                  to={`/categories/${cat.slug}`}
-                  className="flex-1 px-4 py-3 text-sm font-semibold text-gray-800 no-underline"
-                >
-                  {cat.name}
-                </Link>
-                {hasDropdown && (
-                  <button
-                    onClick={() => handleClick(cat.id)}
-                    className="px-4 py-3 cursor-pointer border-none bg-transparent"
-                  >
-                    <ChevronDown
-                      className={`w-4 h-4 text-gray-400 transition-transform ${
-                        isOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
-                )}
-              </div>
-              {isOpen && hasDropdown && (
-                <div className="pb-2 pl-6">
-                  {cat.children &&
-                    cat.children.map((child) => (
-                      <Link
-                        key={child.id}
-                        to={`/categories/${child.slug}`}
-                        className="block px-4 py-2 text-sm text-gray-600 hover:text-blue-600 no-underline"
-                        onClick={() => setOpenCategory(null)}
-                      >
-                        {child.name}
-                      </Link>
-                    ))}
-                  {cat.subcategories &&
-                    cat.subcategories.map((sub) => (
-                      <Link
-                        key={sub.id}
-                        to={`/categories/${cat.slug}/${sub.slug}`}
-                        className="block px-4 py-2 text-sm text-gray-500 hover:text-blue-600 no-underline"
-                        onClick={() => setOpenCategory(null)}
-                      >
-                        {sub.name}
-                      </Link>
-                    ))}
-                </div>
+        <nav className="flex items-center gap-2 overflow-x-auto py-2 -mx-4 px-4 sm:-mx-6 sm:px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {categories.map((cat) => (
+            <Link
+              key={cat.id}
+              to={`/categories/${cat.slug}`}
+              className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-gray-200 text-xs font-semibold text-gray-700 hover:border-indigo-300 hover:text-indigo-600 transition-colors no-underline"
+            >
+              {cat.name}
+              {(cat.children?.length > 0 || cat.subcategories?.length > 0) && (
+                <ChevronRight className="w-3 h-3 text-gray-300" />
               )}
-            </div>
-          );
-        })}
-        <Link
-          to="/categories"
-          className="block px-4 py-3 text-sm font-semibold text-blue-600 no-underline"
-        >
-          View All Categories
-        </Link>
+            </Link>
+          ))}
+          <Link
+            to="/categories"
+            className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors no-underline"
+          >
+            <Grid3X3 className="w-3 h-3" />
+            All Categories
+          </Link>
+        </nav>
       </div>
     </div>
   );

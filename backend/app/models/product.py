@@ -24,6 +24,12 @@ class ProductStatus(str, enum.Enum):
     SOLD = "SOLD"
 
 
+class ProductApprovalStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class Product(Base):
     __tablename__ = "products"
     __table_args__ = (
@@ -33,6 +39,7 @@ class Product(Base):
         Index("ix_products_subcategory_id", "subcategory_id"),
         Index("ix_products_slug", "slug"),
         Index("ix_products_status", "status"),
+        Index("ix_products_approval_status", "approval_status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -55,6 +62,22 @@ class Product(Base):
     best_seller_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_trending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     trending_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    added_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
+    )
+    approval_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ProductApprovalStatus.PENDING.value
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=ProductStatus.ACTIVE.value
     )

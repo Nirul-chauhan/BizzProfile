@@ -7,6 +7,8 @@ from app.database import check_db_health
 from app.routers.auth import router as auth_router
 from app.routers.biz_profile import router as biz_profile_router
 from app.routers.nearby import router as nearby_router
+from app.routers.nearby import nearby_all_router
+
 from app.routers.search import router as search_router
 from app.routers.category import router as category_router
 from app.routers.admin_category import router as admin_category_router
@@ -33,11 +35,14 @@ from app.routers.public_products import router as public_products_router
 from app.routers.admin_best_sellers import router as admin_best_sellers_router
 from app.routers.admin_trending_products import router as admin_trending_products_router
 from app.routers.admin_services import router as admin_services_router
+from app.routers.admin_products import router as admin_products_router
 from app.routers.public_services_listing import router as public_services_listing_router
 from app.routers.admin_services_listing import router as admin_services_listing_router
 from app.routers.admin_enquiries import router as admin_enquiries_router
 from app.routers.services_listing import router as services_listing_router
 from app.routers.admin_enquiries import router as admin_enquiries_router
+from app.routers.more_value_adds import router as more_value_adds_router
+from app.routers.notifications import router as notifications_router
 
 settings = get_settings()
 
@@ -58,6 +63,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(nearby_router)
+app.include_router(nearby_all_router)
+
 app.include_router(search_router)
 app.include_router(biz_profile_router)
 app.include_router(category_router)
@@ -85,10 +92,13 @@ app.include_router(public_products_router)
 app.include_router(admin_best_sellers_router)
 app.include_router(admin_trending_products_router)
 app.include_router(admin_services_router)
+app.include_router(admin_products_router)
 app.include_router(public_services_listing_router)
 app.include_router(admin_services_listing_router)
 app.include_router(services_listing_router)
 app.include_router(admin_enquiries_router)
+app.include_router(more_value_adds_router)
+app.include_router(notifications_router)
 
 import os
 from pathlib import Path
@@ -108,6 +118,6 @@ def api_health_check():
     db = check_db_health()
     return {
         "status": "ok" if db["status"] == "ok" else "degraded",
-        "app": settings.APP_NAME,
+"app": settings.APP_NAME,
         "database": db,
     }

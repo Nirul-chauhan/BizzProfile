@@ -1,7 +1,31 @@
 const API_BASE = "/api";
 
+// Fired when a request comes back 401 so the auth context can drop its
+// in-memory session too. Without this, React state can still claim the user
+// is signed in while the stored token is already gone, and the next write
+// goes out with no Authorization header.
+export const AUTH_EXPIRED_EVENT = "bp:auth-expired";
+
+let authToken = null;
+
+/**
+ * Keep the token used for requests in step with the auth context.
+ * The in-memory value wins so a request can never disagree with the state the
+ * UI used to decide the user is signed in.
+ */
+export function setAuthToken(token) {
+  authToken = token || null;
+  if (authToken) {
+    localStorage.setItem("token", authToken);
+  }
+}
+
+export function getAuthToken() {
+  return authToken || localStorage.getItem("token") || null;
+}
+
 function getToken() {
-  return localStorage.getItem("token");
+  return getAuthToken();
 }
 
 function authHeaders(extra = {}) {
@@ -35,6 +59,11 @@ async function request(path, options = {}) {
   if (res.status === 401) {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    // Tell the auth context so it stops reporting the user as signed in.
+    // Otherwise isAuthenticated stays true and later writes silently 401
+    // with "Not authenticated".
+    authToken = null;
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
     let msg = "Unauthorized";
     try {
       const errData = JSON.parse(text);
@@ -681,8 +710,11 @@ export async function sellerGetDocuments() {
   return request("/seller/documents", { headers: authHeaders() });
 }
 
-export async function sellerListProducts(page = 1, pageSize = 20) {
-  return request(`/seller/products?page=${page}&page_size=${pageSize}`, {
+export async function sellerListProducts(page = 1, pageSize = 20, approvalStatus = null, search = null) {
+  const params = new URLSearchParams({ page, page_size: pageSize });
+  if (approvalStatus) params.append("approval_status", approvalStatus);
+  if (search) params.append("search", search);
+  return request(`/seller/products?${params}`, {
     headers: authHeaders(),
   });
 }
@@ -704,6 +736,13 @@ export async function sellerUpdateProduct(id, data) {
     method: "PUT",
     headers: authHeaders(),
     body: JSON.stringify(data),
+  });
+}
+
+export async function sellerSubmitProduct(id) {
+  return request(`/seller/products/${id}/submit`, {
+    method: "POST",
+    headers: authHeaders(),
   });
 }
 
@@ -734,8 +773,11 @@ export async function sellerDeleteProductImage(imageId) {
   });
 }
 
-export async function sellerListServices(page = 1, pageSize = 20) {
-  return request(`/seller/services?page=${page}&page_size=${pageSize}`, {
+export async function sellerListServices(page = 1, pageSize = 20, approvalStatus = null, search = null) {
+  const params = new URLSearchParams({ page, page_size: pageSize });
+  if (approvalStatus) params.append("approval_status", approvalStatus);
+  if (search) params.append("search", search);
+  return request(`/seller/services?${params}`, {
     headers: authHeaders(),
   });
 }
@@ -881,6 +923,49 @@ export async function adminUploadBannerImage(id, file) {
   const formData = new FormData();
   formData.append("file", file);
   return request(`/admin/banners/${id}/image`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    body: formData,
+  });
+}
+
+// --- More Value Adds (Public) ---
+export async function getMoreValueAdds() {
+  return request("/more-value-adds");
+}
+
+// --- More Value Adds (Admin) ---
+export async function adminListMoreValueAdds() {
+  return request("/admin/more-value-adds", { headers: authHeaders() });
+}
+
+export async function adminCreateMoreValueAdds(data) {
+  return request("/admin/more-value-adds", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(data),
+  });
+}
+
+export async function adminUpdateMoreValueAdds(id, data) {
+  return request(`/admin/more-value-adds/${id}`, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify(data),
+  });
+}
+
+export async function adminDeleteMoreValueAdds(id) {
+  return request(`/admin/more-value-adds/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+}
+
+export async function adminUploadMoreValueAddsImage(id, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request(`/admin/more-value-adds/${id}/image`, {
     method: "POST",
     headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
     body: formData,
@@ -1049,6 +1134,15 @@ export async function getSocieties() {
 }
 
 // --- Nearby Profiles (Public with location) ---
+export async function getNearbyAll({ latitude, longitude, radiusKm = 5, limit = 20 } = {}) {
+  const params = new URLSearchParams();
+  if (latitude != null) params.set("latitude", latitude);
+  if (longitude != null) params.set("longitude", longitude);
+  params.set("radius_km", radiusKm);
+  params.set("limit", limit);
+  return request(`/nearby?${params.toString()}`);
+}
+
 export async function getNearbyProfilesPublic(latitude, longitude, radiusKm = 10, page = 1, pageSize = 12) {
   const params = new URLSearchParams();
   params.set("latitude", latitude);
@@ -1077,6 +1171,10 @@ export async function getPublicServices(params = {}) {
 
 export async function getTrendingServices(limit = 10) {
   return request(`/public/services/trending?limit=${limit}`);
+}
+
+export async function getPublicServiceById(serviceId) {
+  return request(`/public/services/${serviceId}`);
 }
 
 // --- Public Products (Best Sellers) ---
@@ -1451,13 +1549,23 @@ export async function adminListServiceRequests(approvalStatus = "") {
   return request(`/admin/services-listing/requests${qs}`, { headers: authHeaders() });
 }
 
-// ─── Service Listings (Seller) ──────────────────────────────
-export async function sellerListMyServices() {
-  return request("/services-listing/seller/list", { headers: authHeaders() });
+// ─── Seller Services (BizService, profile-owned + approval workflow) ─────
+export async function sellerListMyServices(params = {}) {
+  const qs = new URLSearchParams({
+    page: params.page ?? 1,
+    page_size: params.page_size ?? 100,
+  });
+  if (params.approval_status) qs.set("approval_status", params.approval_status);
+  if (params.search) qs.set("search", params.search);
+  return request(`/seller/services?${qs}`, { headers: authHeaders() });
+}
+
+export async function sellerGetService(id) {
+  return request(`/seller/services/${id}`, { headers: authHeaders() });
 }
 
 export async function sellerCreateService(data) {
-  return request("/services-listing/seller/upload", {
+  return request("/seller/services", {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(data),
@@ -1465,15 +1573,23 @@ export async function sellerCreateService(data) {
 }
 
 export async function sellerUpdateService(id, data) {
-  return request(`/services-listing/seller/${id}`, {
+  return request(`/seller/services/${id}`, {
     method: "PUT",
     headers: authHeaders(),
     body: JSON.stringify(data),
   });
 }
 
+/** Hand a draft/rejected service to an admin for review. */
+export async function sellerSubmitService(id) {
+  return request(`/seller/services/${id}/submit`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+}
+
 export async function sellerDeleteService(id) {
-  return request(`/services-listing/seller/${id}`, {
+  return request(`/seller/services/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -1587,3 +1703,107 @@ export async function adminReviewBizServiceRequest(serviceId, action, rejectionR
     body: JSON.stringify({ action, rejection_reason: rejectionReason || null }),
   });
 }
+
+// ─── Admin Products (approval workflow) ─────────────────────────
+export async function adminListAllProducts(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.category_id) qs.set("category_id", params.category_id);
+  if (params.approval_status) qs.set("approval_status", params.approval_status);
+  if (params.status) qs.set("status", params.status);
+  if (params.business_id) qs.set("business_id", params.business_id);
+  if (params.page) qs.set("page", params.page);
+  if (params.page_size) qs.set("page_size", params.page_size);
+  return request(`/admin/products?${qs}`, { headers: authHeaders() });
+}
+
+export async function adminCountAllProducts(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.category_id) qs.set("category_id", params.category_id);
+  if (params.approval_status) qs.set("approval_status", params.approval_status);
+  if (params.status) qs.set("status", params.status);
+  if (params.business_id) qs.set("business_id", params.business_id);
+  return request(`/admin/products/count?${qs}`, { headers: authHeaders() });
+}
+
+export async function adminListProductRequests(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.page) qs.set("page", params.page);
+  if (params.page_size) qs.set("page_size", params.page_size);
+  return request(`/admin/products/requests?${qs}`, { headers: authHeaders() });
+}
+
+export async function adminCountProductRequests() {
+  return request("/admin/products/requests/count", { headers: authHeaders() });
+}
+
+export async function adminGetProduct(productId) {
+  return request(`/admin/products/${productId}`, { headers: authHeaders() });
+}
+
+/** Approving publishes the product to the public marketplace. */
+export async function adminApproveProduct(productId) {
+  return request(`/admin/products/${productId}/approve`, {
+    method: "PATCH",
+    headers: authHeaders(),
+  });
+}
+
+export async function adminRejectProduct(productId, rejectionReason) {
+  return request(`/admin/products/${productId}/reject`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ rejection_reason: rejectionReason || null }),
+  });
+}
+
+export async function adminReviewProduct(productId, action, rejectionReason) {
+  return request(`/admin/products/${productId}/review`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ action, rejection_reason: rejectionReason || null }),
+  });
+}
+
+export async function adminSetProductStatus(productId, status) {
+  return request(`/admin/products/${productId}/status`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function adminDeleteProduct(productId, hard = false) {
+  return request(`/admin/products/${productId}?hard=${hard}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+}
+
+// --- Notifications (all authenticated users) ---
+export async function listNotifications(page = 1, pageSize = 20, unreadOnly = false) {
+  return request(
+    `/notifications?page=${page}&page_size=${pageSize}&unread_only=${unreadOnly}`,
+    { headers: authHeaders() }
+  );
+}
+
+export async function getUnreadNotificationsCount() {
+  return request("/notifications/unread-count", { headers: authHeaders() });
+}
+
+export async function markNotificationRead(id) {
+  return request(`/notifications/${id}/read`, {
+    method: "PATCH",
+    headers: authHeaders(),
+  });
+}
+
+export async function markAllNotificationsRead() {
+  return request("/notifications/read-all", {
+    method: "PATCH",
+    headers: authHeaders(),
+  });
+}
+

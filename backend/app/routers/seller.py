@@ -23,15 +23,19 @@ from app.schemas.seller import (
     SellerBusinessHourResponse,
     SellerEnquiryResponse,
     SellerEnquiryUpdateStatus,
+    SellerEnquiryListResponse,
     SellerQuotationCreate,
     SellerQuotationUpdate,
     SellerQuotationResponse,
+    SellerQuotationListResponse,
     SellerRequirementResponse,
     SellerMessageCreate,
     SellerMessageResponse,
     SellerProfileSettingsUpdate,
     SellerProfileSettingsResponse,
 )
+from app.models.product import ProductApprovalStatus
+from app.models.service import ServiceApprovalStatus
 
 router = APIRouter(prefix="/api/seller", tags=["seller"])
 
@@ -231,12 +235,20 @@ def list_documents(
 def list_products(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    approval_status: ProductApprovalStatus | None = Query(None),
+    search: str | None = Query(None),
     current_user: User = Depends(require_enduser),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
-        return svc.list_products(current_user.id, page, page_size)
+        return svc.list_products(
+            current_user.id,
+            page,
+            page_size,
+            approval_status.value if approval_status else None,
+            search,
+        )
     except SellerError as e:
         _handle_seller_error(e)
 
@@ -278,6 +290,20 @@ def update_product(
     svc = _get_service(db)
     try:
         return svc.update_product(current_user.id, product_id, data.model_dump(exclude_unset=True))
+    except SellerError as e:
+        _handle_seller_error(e)
+
+
+@router.post("/products/{product_id}/submit", response_model=SellerProductResponse)
+def submit_product(
+    product_id: int,
+    current_user: User = Depends(require_enduser),
+    db: Session = Depends(get_db_session),
+):
+    """Send one of the seller's own products to the admin approval queue."""
+    svc = _get_service(db)
+    try:
+        return svc.submit_product(current_user.id, product_id)
     except SellerError as e:
         _handle_seller_error(e)
 
@@ -349,12 +375,20 @@ def delete_product_image(
 def list_services(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    approval_status: ServiceApprovalStatus | None = Query(None),
+    search: str | None = Query(None),
     current_user: User = Depends(require_enduser),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
-        return svc.list_services(current_user.id, page, page_size)
+        return svc.list_services(
+            current_user.id,
+            page,
+            page_size,
+            approval_status.value if approval_status else None,
+            search,
+        )
     except SellerError as e:
         _handle_seller_error(e)
 
@@ -399,6 +433,20 @@ def update_service(
         _handle_seller_error(e)
 
 
+@router.post("/services/{service_id}/submit", response_model=SellerServiceResponse)
+def submit_service(
+    service_id: int,
+    current_user: User = Depends(require_enduser),
+    db: Session = Depends(get_db_session),
+):
+    """Send one of the seller's own services to the admin approval queue."""
+    svc = _get_service(db)
+    try:
+        return svc.submit_service(current_user.id, service_id)
+    except SellerError as e:
+        _handle_seller_error(e)
+
+
 @router.delete("/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_service(
     service_id: int,
@@ -416,7 +464,7 @@ def delete_service(
 # 10. Enquiries
 # ---------------------------------------------------------------------------
 
-@router.get("/enquiries")
+@router.get("/enquiries", response_model=SellerEnquiryListResponse)
 def list_enquiries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -475,7 +523,7 @@ def create_quotation(
         _handle_seller_error(e)
 
 
-@router.get("/quotations")
+@router.get("/quotations", response_model=SellerQuotationListResponse)
 def list_quotations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

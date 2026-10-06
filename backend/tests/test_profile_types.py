@@ -5,10 +5,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.database import Base, get_db
+from app.dependencies.database import get_db_session
 from app.main import app
 from app.models.category import Category
 from app.models.role import Role, RoleEnum
@@ -18,7 +20,11 @@ from app.services.password import hash_password
 
 @pytest.fixture(scope="module")
 def engine():
-    eng = create_engine("sqlite:///:memory:")
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(eng)
     yield eng
     eng.dispose()
@@ -50,6 +56,10 @@ def client(db, set_env):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+    # Routers declare Depends(get_db_session) from app.dependencies.database,
+    # which is a different callable than app.database.get_db. Without this
+    # override the app falls through to the real (production) session.
+    app.dependency_overrides[get_db_session] = override_get_db
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -71,6 +81,7 @@ def test_user(db, user_role):
         full_name="Test User",
         email="test@example.com",
         password_hash=hash_password("TestPass123!"),
+        is_email_verified=True,
         is_active=True,
     )
     db.add(user)
@@ -141,7 +152,7 @@ class TestCompanyProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_company_profile_rejects_msme_detail(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")
@@ -157,7 +168,7 @@ class TestCompanyProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_company_requires_company_detail(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")
@@ -171,7 +182,7 @@ class TestCompanyProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_get_company_profile_with_detail(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")
@@ -260,7 +271,7 @@ class TestIndividualProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_individual_requires_individual_detail(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")
@@ -274,7 +285,7 @@ class TestIndividualProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_individual_experience_years_validation(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")
@@ -358,7 +369,7 @@ class TestMsmProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_msme_requires_msme_detail(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")
@@ -372,7 +383,7 @@ class TestMsmProfile:
             },
             headers=_auth(token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_update_msme_detail(self, client, test_user, test_category):
         token = _login(client, "test@example.com", "TestPass123!")

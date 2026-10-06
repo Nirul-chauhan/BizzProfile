@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -37,6 +37,7 @@ import {
   Phone,
   Globe,
   MapPin,
+  Navigation,
   Loader,
   FileText,
   Tag,
@@ -62,6 +63,7 @@ import {
   sellerGetProduct,
   sellerCreateProduct,
   sellerUpdateProduct,
+  sellerSubmitProduct,
   sellerDeleteProduct,
   sellerGetProductImages,
   sellerAddProductImage,
@@ -93,7 +95,7 @@ import SellerQuotations from "./SellerQuotations";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "profile", label: "My Profile", icon: UserCircle },
+  { id: "profile", label: "My Business", icon: UserCircle },
   { id: "products", label: "My Products", icon: Package },
   { id: "my-services", label: "My Services", icon: Briefcase },
   { id: "my-videos", label: "My Videos", icon: Play },
@@ -115,11 +117,8 @@ const EMPTY_PRODUCT = {
   price: "",
   category_id: "",
   subcategory_id: "",
-  is_best_seller: false,
-  is_active: true,
-  stock_quantity: "",
-  unit: "",
-  min_order_quantity: "",
+  price_unit: "",
+  is_available: true,
 };
 
 function Spinner() {
@@ -148,6 +147,20 @@ function EmptyState({ icon: Icon, title, description, actionLabel, onAction }) {
   );
 }
 
+function ApprovalBadge({ status }) {
+  const styles = {
+    PENDING: "bg-yellow-100 text-yellow-700",
+    APPROVED: "bg-green-100 text-green-700",
+    REJECTED: "bg-red-100 text-red-700",
+  };
+  const label = { PENDING: "In Review", APPROVED: "Approved", REJECTED: "Rejected" };
+  return (
+    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${styles[status] || "bg-gray-100 text-gray-500"}`}>
+      {label[status] || status}
+    </span>
+  );
+}
+
 function Message({ type, text }) {
   if (!text) return null;
   return (
@@ -160,6 +173,50 @@ function Message({ type, text }) {
     >
       {type === "success" ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
       {text}
+    </div>
+  );
+}
+
+function EnquiryNotificationCard({ enquiry, onView, onDismiss }) {
+  const item = enquiry.product_name || enquiry.service_name || "your listing";
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+      <div className="px-4 py-2.5 bg-red-50 border-b border-red-100 flex items-center gap-2">
+        <Bell className="w-4 h-4 text-red-500" />
+        <span className="text-xs font-extrabold text-red-600 tracking-wide uppercase">New Enquiry</span>
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            className="ml-auto text-red-400 hover:text-red-600 border-none bg-transparent cursor-pointer"
+            aria-label="Dismiss notification"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="p-4">
+        <p className="text-sm text-gray-600">
+          <span className="font-bold text-gray-900">{enquiry.buyer_name || "A buyer"}</span> wants:
+        </p>
+        <p className="text-sm font-extrabold text-gray-900 mt-0.5 line-clamp-1">{item}</p>
+        {enquiry.location && (
+          <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+            Location: {enquiry.location}
+          </p>
+        )}
+        {enquiry.message && (
+          <p className="text-xs text-gray-600 mt-1.5 leading-relaxed line-clamp-2">
+            Message: {enquiry.message}
+          </p>
+        )}
+        <button
+          onClick={() => onView(enquiry)}
+          className="mt-3 w-full py-2 text-xs font-bold text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors cursor-pointer border-none"
+        >
+          View Enquiry
+        </button>
+      </div>
     </div>
   );
 }
@@ -179,19 +236,22 @@ export default function SellerDashboard() {
   // Profile
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({
-    business_name: "",
-    description: "",
-    phone: "",
-    email: "",
-    website: "",
-    address: "",
-    city: "",
-    state: "",
-    country: "India",
-    category_id: "",
+      business_name: "",
+      description: "",
+      phone: "",
+      email: "",
+      website: "",
+      address: "",
+      city: "",
+      state: "",
+      country: "India",
+      latitude: null,
+      longitude: null,
+      category_id: "",
     subcategory_id: "",
   });
   const [savingProfile, setSavingProfile] = useState(false);
+  const [locatingProfile, setLocatingProfile] = useState(false);
   const [profileMsg, setProfileMsg] = useState({ type: "", text: "" });
   const [socialLinks, setSocialLinks] = useState([]);
   const [newSocialPlatform, setNewSocialPlatform] = useState("");
@@ -201,10 +261,12 @@ export default function SellerDashboard() {
   const [products, setProducts] = useState([]);
   const [productPage, setProductPage] = useState(1);
   const [productTotal, setProductTotal] = useState(0);
+  const [productFilter, setProductFilter] = useState("");
   const [productForm, setProductForm] = useState({ ...EMPTY_PRODUCT });
   const [editingProduct, setEditingProduct] = useState(null);
   const [productMsg, setProductMsg] = useState({ type: "", text: "" });
   const [savingProduct, setSavingProduct] = useState(false);
+  const [submittingProduct, setSubmittingProduct] = useState(null);
   const [productImages, setProductImages] = useState({});
   const [showProductForm, setShowProductForm] = useState(false);
   const [imageUploadProduct, setImageUploadProduct] = useState(null);
@@ -216,7 +278,18 @@ export default function SellerDashboard() {
   const [enquiryTotal, setEnquiryTotal] = useState(0);
   const [enquiryFilter, setEnquiryFilter] = useState("");
   const [selectedEnquiry, setSelectedEnquiry] = useState(null);
-  const [quotationForm, setQuotationForm] = useState({ amount: "", description: "", valid_until: "" });
+  const [toastEnquiry, setToastEnquiry] = useState(null);
+  const [newEnquiries, setNewEnquiries] = useState([]);
+  const [bellOpen, setBellOpen] = useState(false);
+  const seenEnquiryIds = useRef(null);
+  const [quotationForm, setQuotationForm] = useState({
+    quantity: "",
+    unit_price: "",
+    description: "",
+    terms: "",
+    delivery_days: "",
+    valid_days: "7",
+  });
   const [sendingQuotation, setSendingQuotation] = useState(false);
   const [enquiryMsg, setEnquiryMsg] = useState({ type: "", text: "" });
 
@@ -280,6 +353,65 @@ export default function SellerDashboard() {
     if (!user) return;
     loadSectionData();
   }, [activeSection, user]);
+
+  // Keep the new-enquiry nav badge fresh regardless of the active section.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refreshBadge = async () => {
+      try {
+        const data = await sellerGetDashboard();
+        if (active) setDashboardData((prev) => ({ ...prev, ...data }));
+      } catch {
+        // Badge refresh is best-effort.
+      }
+    };
+    refreshBadge();
+    const timer = setInterval(refreshBadge, 60000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [user]);
+
+  // Watch for enquiries that arrive while the seller is in the dashboard:
+  // feeds the bell list and raises a toast for anything genuinely new.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const data = await sellerListEnquiries(1, 20, "NEW");
+        if (!active) return;
+        const list = data?.items || [];
+        setNewEnquiries(list);
+        const ids = new Set(list.map((e) => e.id));
+        if (seenEnquiryIds.current === null) {
+          // First load only establishes a baseline; don't replay old enquiries.
+          seenEnquiryIds.current = ids;
+        } else {
+          const fresh = list.filter((e) => !seenEnquiryIds.current.has(e.id));
+          seenEnquiryIds.current = ids;
+          if (fresh.length) setToastEnquiry(fresh[0]);
+        }
+      } catch {
+        // Notification polling is best-effort.
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [user]);
+
+  // Auto-dismiss the toast after a while.
+  useEffect(() => {
+    if (!toastEnquiry) return;
+    const timer = setTimeout(() => setToastEnquiry(null), 12000);
+    return () => clearTimeout(timer);
+  }, [toastEnquiry]);
 
   const loadSectionData = async () => {
     setLoading(true);
@@ -360,14 +492,46 @@ export default function SellerDashboard() {
         address: profileData?.address || "",
         city: profileData?.city || "",
         state: profileData?.state || "",
-        country: profileData?.country || "India",
-        category_id: profileData?.category_id ?? "",
-        subcategory_id: profileData?.subcategory_id ?? "",
-      });
+            country: profileData?.country || "India",
+            latitude: profileData?.latitude ?? null,
+            longitude: profileData?.longitude ?? null,
+            category_id: profileData?.category_id ?? "",
+            subcategory_id: profileData?.subcategory_id ?? "",
+          });
       setSocialLinks(linksData || []);
     } catch {
       setProfile(null);
     }
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setProfileMsg({ type: "error", text: "Geolocation is not supported by your browser." });
+      return;
+    }
+    setLocatingProfile(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setProfileForm((f) => ({
+          ...f,
+          latitude: Number(pos.coords.latitude.toFixed(6)),
+          longitude: Number(pos.coords.longitude.toFixed(6)),
+        }));
+        setLocatingProfile(false);
+        setProfileMsg({
+          type: "success",
+          text: "Location captured. Remember to click Update Profile to save it.",
+        });
+      },
+      () => {
+        setLocatingProfile(false);
+        setProfileMsg({
+          type: "error",
+          text: "Could not read your location. Enter the coordinates manually.",
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   const handleSaveProfile = async () => {
@@ -427,11 +591,12 @@ export default function SellerDashboard() {
   // ─── PRODUCTS ─────────────────────────────────────────────────────────────
   const loadProducts = async (page = 1) => {
     try {
-      const data = await sellerListProducts(page);
-      setProducts(data?.items || data || []);
+      const data = await sellerListProducts(page, 20, productFilter || null);
+      const items = data?.items || data || [];
+      setProducts(items);
       setProductTotal(data?.total || 0);
       setProductPage(page);
-      for (const p of data?.items || data || []) {
+      for (const p of items) {
         try {
           const imgs = await sellerGetProductImages(p.id);
           setProductImages((prev) => ({ ...prev, [p.id]: imgs || [] }));
@@ -461,13 +626,13 @@ export default function SellerDashboard() {
     setProductMsg({ type: "", text: "" });
     try {
       const payload = {
-        ...productForm,
+        name: productForm.name,
+        description: productForm.description || null,
         price: productForm.price ? parseFloat(productForm.price) : null,
+        price_unit: productForm.price_unit || null,
         category_id: productForm.category_id ? parseInt(productForm.category_id) : null,
         subcategory_id: productForm.subcategory_id ? parseInt(productForm.subcategory_id) : null,
-        price_unit: productForm.unit || null,
-        stock_quantity: productForm.stock_quantity ? parseInt(productForm.stock_quantity) : null,
-        min_order_quantity: productForm.min_order_quantity ? parseInt(productForm.min_order_quantity) : null,
+        is_available: productForm.is_available !== false,
       };
       if (editingProduct) {
         await sellerUpdateProduct(editingProduct.id, payload);
@@ -488,29 +653,45 @@ export default function SellerDashboard() {
   };
 
   const handleEditProduct = (product) => {
+    if (product.approval_status === "APPROVED") {
+      setProductMsg({ type: "error", text: "Approved products are locked. Contact admin to make changes." });
+      setTimeout(() => setProductMsg({ type: "", text: "" }), 4000);
+      return;
+    }
     setEditingProduct(product);
-    const parentCat = (categoryTree.length ? categoryTree : categories).find((c) =>
-      c.subcategories?.some((s) => s.id === product.subcategory_id)
-    );
     setProductForm({
       name: product.name || "",
       description: product.description || "",
-      price: product.price || "",
-      category_id: parentCat?.id || product.category_id || "",
+      price: product.price ?? "",
+      price_unit: product.price_unit || "",
+      category_id: product.category_id || "",
       subcategory_id: product.subcategory_id || "",
-      is_best_seller: product.is_best_seller || false,
-      is_active: product.is_active !== false,
-      stock_quantity: product.stock_quantity || "",
-      unit: product.price_unit || product.unit || "",
-      min_order_quantity: product.min_order_quantity || "",
+      is_available: product.is_available !== false,
     });
     setShowProductForm(true);
   };
 
-  const handleDeleteProduct = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this product?")) return;
+  const handleSubmitProduct = async (product) => {
+    setSubmittingProduct(product.id);
     try {
-      await sellerDeleteProduct(id);
+      await sellerSubmitProduct(product.id);
+      setProductMsg({ type: "success", text: "Sent to admin for approval!" });
+      await loadProducts(productPage);
+      setTimeout(() => setProductMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setProductMsg({ type: "error", text: err.message || "Failed to submit for approval" });
+    } finally {
+      setSubmittingProduct(null);
+    }
+  };
+
+  const handleDeleteProduct = async (product) => {
+    const warn = product.approval_status === "APPROVED"
+      ? "This product is live on the marketplace. Deleting it will remove it immediately. Continue?"
+      : "Are you sure you want to delete this product?";
+    if (!window.confirm(warn)) return;
+    try {
+      await sellerDeleteProduct(product.id);
       await loadProducts(productPage);
     } catch (err) {
       setProductMsg({ type: "error", text: err.message || "Failed to delete product" });
@@ -549,6 +730,17 @@ export default function SellerDashboard() {
     }
   };
 
+  // Jump from a notification straight to that enquiry in the Enquiries section.
+  const viewEnquiryNotification = (enquiry) => {
+    setToastEnquiry(null);
+    setBellOpen(false);
+    setEnquiryFilter("");
+    setSelectedEnquiry(enquiry);
+    setQuotationForm(quotationFormFor(enquiry));
+    setActiveSection("enquiries");
+    loadEnquiries(1);
+  };
+
   const handleUpdateEnquiryStatus = async (id, status) => {
     try {
       await sellerUpdateEnquiryStatus(id, status);
@@ -561,24 +753,63 @@ export default function SellerDashboard() {
     }
   };
 
+  const EMPTY_QUOTATION_FORM = {
+    quantity: "",
+    unit_price: "",
+    description: "",
+    terms: "",
+    delivery_days: "",
+    valid_days: "7",
+  };
+
+  // The buyer already told us how many they need, so start the quote from their
+  // number instead of making the seller retype it.
+  const quotationFormFor = (enquiry) => ({
+    ...EMPTY_QUOTATION_FORM,
+    quantity: enquiry?.quantity > 1 ? String(enquiry.quantity) : "",
+  });
+
+  // Live total so the seller sees the figure the buyer will see.
+  const quotationTotal = useMemo(() => {
+    const qty = parseFloat(quotationForm.quantity);
+    const price = parseFloat(quotationForm.unit_price);
+    if (!Number.isFinite(qty) || !Number.isFinite(price)) return null;
+    if (qty <= 0 || price <= 0) return null;
+    return Math.round(qty * price * 100) / 100;
+  }, [quotationForm.quantity, quotationForm.unit_price]);
+
   const handleSendQuotation = async () => {
     if (!selectedEnquiry) return;
-    if (!quotationForm.amount || !quotationForm.description) {
-      setEnquiryMsg({ type: "error", text: "Amount and message are required" });
+    if (quotationTotal === null) {
+      setEnquiryMsg({ type: "error", text: "Enter a quantity and a unit price" });
       return;
     }
+    const qty = parseInt(quotationForm.quantity, 10);
+    const price = parseFloat(quotationForm.unit_price);
     setSendingQuotation(true);
     setEnquiryMsg({ type: "", text: "" });
     try {
       await sellerCreateQuotation({
         enquiry_id: selectedEnquiry.id,
-        amount: parseFloat(quotationForm.amount),
-        description: quotationForm.description,
-        valid_until: quotationForm.valid_until || null,
+        quantity: qty,
+        unit_price: price,
+        amount: quotationTotal,
+        description: quotationForm.description || null,
+        terms: quotationForm.terms || null,
+        delivery_days:
+          quotationForm.delivery_days === "" ? null : parseInt(quotationForm.delivery_days, 10),
+        valid_days:
+          quotationForm.valid_days === "" ? null : parseInt(quotationForm.valid_days, 10),
       });
       setEnquiryMsg({ type: "success", text: "Quotation sent!" });
-      setQuotationForm({ amount: "", description: "", valid_until: "" });
-      await handleUpdateEnquiryStatus(selectedEnquiry.id, "REPLIED");
+      setQuotationForm(quotationFormFor(selectedEnquiry));
+      // The backend already moves the enquiry to QUOTED when a quotation is
+      // created, so no follow-up status update is needed here.
+      await loadEnquiries(enquiryPage);
+      setSelectedEnquiry((prev) =>
+        prev && prev.id === selectedEnquiry.id ? { ...prev, status: "QUOTED" } : prev
+      );
+      await loadDashboard();
       setTimeout(() => setEnquiryMsg({ type: "", text: "" }), 3000);
     } catch (err) {
       setEnquiryMsg({ type: "error", text: err.message || "Failed to send quotation" });
@@ -722,15 +953,67 @@ export default function SellerDashboard() {
               <p className="text-emerald-300 text-[10px] font-medium">Seller Portal</p>
             </div>
           </div>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-white/60 hover:text-white cursor-pointer border-none bg-transparent">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Enquiry notification bell */}
+            <div className="relative">
+              <button
+                onClick={() => setBellOpen((o) => !o)}
+                className="relative w-9 h-9 flex items-center justify-center rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer border-none bg-transparent"
+                aria-label={`Enquiry notifications (${newEnquiries.length} new)`}
+              >
+                <Bell className="w-5 h-5" />
+                {newEnquiries.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+                    {newEnquiries.length > 9 ? "9+" : newEnquiries.length}
+                  </span>
+                )}
+              </button>
+              {bellOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setBellOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-80 z-50 max-h-[70vh] overflow-y-auto rounded-xl shadow-2xl border border-gray-200 bg-white">
+                    <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-gray-900 uppercase tracking-wide">
+                        Enquiry Notifications
+                      </span>
+                      <span className="text-[11px] font-bold text-gray-400">
+                        {newEnquiries.length} new
+                      </span>
+                    </div>
+                    <div className="p-2 space-y-2">
+                      {newEnquiries.length === 0 ? (
+                        <p className="text-xs text-gray-500 text-center py-6">
+                          No new enquiries right now.
+                        </p>
+                      ) : (
+                        newEnquiries.map((e) => (
+                          <EnquiryNotificationCard
+                            key={e.id}
+                            enquiry={e}
+                            onView={viewEnquiryNotification}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-white/60 hover:text-white cursor-pointer border-none bg-transparent">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
+            const badge =
+              item.id === "enquiries" ? dashboardData?.new_enquiries ?? 0 : 0;
             return (
               <button
                 key={item.id}
@@ -742,7 +1025,15 @@ export default function SellerDashboard() {
                 }`}
               >
                 <Icon className="w-5 h-5" />
-                {item.label}
+                <span className="flex-1 text-left">{item.label}</span>
+                {badge > 0 && (
+                  <span
+                    className="min-w-5 h-5 px-1.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[11px] font-bold"
+                    title={`${badge} new ${badge === 1 ? "enquiry" : "enquiries"}`}
+                  >
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -828,9 +1119,13 @@ export default function SellerDashboard() {
                     {[
                       { label: "Total Products", value: dashboardData?.total_products ?? 0, icon: Package, bg: "bg-blue-50", iconColor: "text-blue-500" },
                       { label: "Active Products", value: dashboardData?.active_products ?? 0, icon: Package, bg: "bg-blue-50", iconColor: "text-blue-600" },
+                      { label: "Best Sellers", value: dashboardData?.best_seller_products ?? 0, icon: Star, bg: "bg-amber-50", iconColor: "text-amber-500" },
                       { label: "Total Services", value: dashboardData?.total_services ?? 0, icon: Briefcase, bg: "bg-emerald-50", iconColor: "text-emerald-500" },
-                      { label: "New Enquiries", value: dashboardData?.new_enquiries ?? 0, icon: Inbox, bg: "bg-amber-50", iconColor: "text-amber-500" },
-                      { label: "Pending Quotations", value: dashboardData?.pending_quotations ?? 0, icon: FileText, bg: "bg-violet-50", iconColor: "text-violet-500" },
+                      { label: "Active Services", value: dashboardData?.active_services ?? 0, icon: Briefcase, bg: "bg-emerald-50", iconColor: "text-emerald-600" },
+                      { label: "Pending Enquiries", value: dashboardData?.pending_enquiries ?? 0, icon: Inbox, bg: "bg-amber-50", iconColor: "text-amber-500" },
+                      { label: "Total Enquiries", value: dashboardData?.total_enquiries ?? 0, icon: Inbox, bg: "bg-amber-50", iconColor: "text-amber-600" },
+                      { label: "Total Quotations", value: dashboardData?.total_quotations ?? 0, icon: FileText, bg: "bg-violet-50", iconColor: "text-violet-500" },
+                      { label: "Promotional Videos", value: dashboardData?.promotional_videos ?? 0, icon: Play, bg: "bg-rose-50", iconColor: "text-rose-500" },
                     ].map((m) => {
                       const Icon = m.icon;
                       return (
@@ -847,8 +1142,24 @@ export default function SellerDashboard() {
                     })}
                   </div>
 
-                  {/* Quick Stats */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                  {/* Approval queue + quick stats */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    <button
+                      onClick={() => navigateToSection("products")}
+                      className="bg-white border border-amber-200 rounded-2xl p-5 text-left hover:shadow-lg transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
+                          <Clock className="w-5 h-5 text-amber-500" />
+                        </div>
+                        <div>
+                          <p className="text-lg font-extrabold text-gray-900">
+                            {(dashboardData?.pending_approval_products ?? 0) + (dashboardData?.pending_approval_services ?? 0)}
+                          </p>
+                          <p className="text-xs text-gray-500">Awaiting Admin Approval</p>
+                        </div>
+                      </div>
+                    </button>
                     <div className="bg-white border border-gray-200/60 rounded-2xl p-5">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
@@ -863,18 +1174,18 @@ export default function SellerDashboard() {
                     <div className="bg-white border border-gray-200/60 rounded-2xl p-5">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
-                          <Briefcase className="w-5 h-5 text-blue-500" />
+                          <Inbox className="w-5 h-5 text-blue-500" />
                         </div>
                         <div>
-                          <p className="text-lg font-extrabold text-gray-900">{dashboardData?.active_services ?? 0}</p>
-                          <p className="text-xs text-gray-500">Active Services</p>
+                          <p className="text-lg font-extrabold text-gray-900">{dashboardData?.new_enquiries ?? 0}</p>
+                          <p className="text-xs text-gray-500">Unread Enquiries</p>
                         </div>
                       </div>
                     </div>
                     <div className="bg-white border border-gray-200/60 rounded-2xl p-5">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
-                          <ShieldCheck className="w-5 h-5 text-amber-500" />
+                        <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center">
+                          <ShieldCheck className="w-5 h-5 text-violet-500" />
                         </div>
                         <div>
                           <p className="text-lg font-extrabold text-gray-900">{dashboardData?.profile_completion ?? 0}%</p>
@@ -1067,6 +1378,79 @@ export default function SellerDashboard() {
                         />
                       </div>
 
+                      {/* Business location - required for buyers to find you via "Nearby Me" */}
+                      <div className="rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/50 p-4">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div>
+                            <label className="block text-sm font-bold text-gray-700">
+                              Business Location
+                            </label>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              Buyers searching &ldquo;Nearby Me&rdquo; only see businesses with
+                              coordinates. Set yours to appear.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleUseCurrentLocation}
+                            disabled={locatingProfile}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50 cursor-pointer border-none flex-shrink-0"
+                          >
+                            {locatingProfile ? (
+                              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <MapPin className="w-3.5 h-3.5" />
+                            )}
+                            Use my location
+                          </button>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1.5">
+                              Latitude
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              value={profileForm.latitude ?? ""}
+                              onChange={(e) =>
+                                setProfileForm({
+                                  ...profileForm,
+                                  latitude:
+                                    e.target.value === "" ? null : parseFloat(e.target.value),
+                                })
+                              }
+                              className="w-full px-3 py-2.5 bg-white border-2 border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none text-gray-900"
+                              placeholder="28.5700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1.5">
+                              Longitude
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              value={profileForm.longitude ?? ""}
+                              onChange={(e) =>
+                                setProfileForm({
+                                  ...profileForm,
+                                  longitude:
+                                    e.target.value === "" ? null : parseFloat(e.target.value),
+                                })
+                              }
+                              className="w-full px-3 py-2.5 bg-white border-2 border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none text-gray-900"
+                              placeholder="77.3200"
+                            />
+                          </div>
+                        </div>
+                        {profileForm.latitude != null && profileForm.longitude != null && (
+                          <p className="text-xs text-emerald-700 font-semibold mt-2">
+                            &bull; Location set &mdash; you&apos;ll appear in Nearby results.
+                          </p>
+                        )}
+                      </div>
+
                       <button
                         onClick={handleSaveProfile}
                         disabled={savingProfile}
@@ -1133,12 +1517,24 @@ export default function SellerDashboard() {
                 <div>
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="text-xl font-extrabold text-gray-900">My Products</h3>
-                    <button
-                      onClick={() => { setShowProductForm(true); setEditingProduct(null); setProductForm({ ...EMPTY_PRODUCT }); }}
-                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md cursor-pointer border-none"
-                    >
-                      <Plus className="w-4 h-4" /> Add Product
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={productFilter}
+                        onChange={(e) => { setProductFilter(e.target.value); loadProducts(1); }}
+                        className="px-3 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                      >
+                        <option value="">All</option>
+                        <option value="PENDING">In Review</option>
+                        <option value="APPROVED">Approved</option>
+                        <option value="REJECTED">Rejected</option>
+                      </select>
+                      <button
+                        onClick={() => { setShowProductForm(true); setEditingProduct(null); setProductForm({ ...EMPTY_PRODUCT }); }}
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md cursor-pointer border-none"
+                      >
+                        <Plus className="w-4 h-4" /> Add Product
+                      </button>
+                    </div>
                   </div>
 
                   <Message type={productMsg.type} text={productMsg.text} />
@@ -1187,8 +1583,8 @@ export default function SellerDashboard() {
                           <label className="block text-xs font-bold text-gray-700 mb-1">Unit</label>
                           <input
                             type="text"
-                            value={productForm.unit}
-                            onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
+                            value={productForm.price_unit}
+                            onChange={(e) => setProductForm({ ...productForm, price_unit: e.target.value })}
                             className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-gray-900"
                             placeholder="e.g. pcs, kg, litre"
                           />
@@ -1219,47 +1615,21 @@ export default function SellerDashboard() {
                             ))}
                           </select>
                         </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">Stock Quantity</label>
-                          <input
-                            type="number"
-                            value={productForm.stock_quantity}
-                            onChange={(e) => setProductForm({ ...productForm, stock_quantity: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-gray-900"
-                            placeholder="0"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">Min Order Qty</label>
-                          <input
-                            type="number"
-                            value={productForm.min_order_quantity}
-                            onChange={(e) => setProductForm({ ...productForm, min_order_quantity: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-gray-900"
-                            placeholder="1"
-                          />
-                        </div>
-                        <div className="flex items-center gap-4 col-span-2">
+                        <div className="col-span-2">
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input
                               type="checkbox"
-                              checked={productForm.is_best_seller}
-                              onChange={(e) => setProductForm({ ...productForm, is_best_seller: e.target.checked })}
+                              checked={productForm.is_available !== false}
+                              onChange={(e) => setProductForm({ ...productForm, is_available: e.target.checked })}
                               className="w-4 h-4 rounded border-gray-300 text-emerald-500 focus:ring-emerald-500"
                             />
-                            <span className="text-sm font-medium text-gray-700">Best Seller</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={productForm.is_active}
-                              onChange={(e) => setProductForm({ ...productForm, is_active: e.target.checked })}
-                              className="w-4 h-4 rounded border-gray-300 text-emerald-500 focus:ring-emerald-500"
-                            />
-                            <span className="text-sm font-medium text-gray-700">Active</span>
+                            <span className="text-sm font-medium text-gray-700">Available for sale</span>
                           </label>
                         </div>
                       </div>
+                      <p className="text-[11px] text-gray-400 mb-3">
+                        New products are saved as a draft and need admin approval before they appear on the public marketplace.
+                      </p>
                       <div className="flex justify-end gap-2 mt-4">
                         <button
                           onClick={() => { setShowProductForm(false); setEditingProduct(null); }}
@@ -1293,7 +1663,7 @@ export default function SellerDashboard() {
                         <table className="w-full">
                           <thead>
                             <tr className="bg-gray-50 border-b border-gray-200/60">
-                              {["Product", "Price", "Stock", "Best Seller", "Status", "Actions"].map((h) => (
+                              {["Product", "Price", "Best Seller", "Approval", "Status", "Actions"].map((h) => (
                                 <th key={h} className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                               ))}
                             </tr>
@@ -1318,7 +1688,6 @@ export default function SellerDashboard() {
                                   </div>
                                 </td>
                                 <td className="px-6 py-4 text-sm font-bold text-gray-900">{p.price ? `₹${p.price}` : "—"}</td>
-                                <td className="px-6 py-4 text-sm text-gray-700">{p.stock_quantity ?? "—"}</td>
                                 <td className="px-6 py-4">
                                   {p.is_best_seller ? (
                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-bold">
@@ -1329,13 +1698,32 @@ export default function SellerDashboard() {
                                   )}
                                 </td>
                                 <td className="px-6 py-4">
-                                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${p.is_active !== false ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
-                                    {p.is_active !== false ? "Active" : "Inactive"}
+                                  <ApprovalBadge status={p.approval_status} />
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${p.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                                    {p.status}
                                   </span>
                                 </td>
                                 <td className="px-6 py-4">
                                   <div className="flex items-center gap-1">
-                                    <button onClick={() => handleEditProduct(p)} className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors cursor-pointer border-none bg-transparent">
+                                    {p.approval_status !== "APPROVED" ? (
+                                      <button
+                                        onClick={() => handleSubmitProduct(p)}
+                                        disabled={submittingProduct === p.id}
+                                        title="Send for approval"
+                                        className="p-1.5 text-amber-500 hover:text-amber-600 transition-colors disabled:opacity-50 cursor-pointer border-none bg-transparent"
+                                      >
+                                        {submittingProduct === p.id
+                                          ? <Loader className="w-4 h-4 animate-spin" />
+                                          : <Send className="w-4 h-4" />}
+                                      </button>
+                                    ) : null}
+                                    <button
+                                      onClick={() => handleEditProduct(p)}
+                                      title={p.approval_status === "APPROVED" ? "Approved products are locked" : "Edit"}
+                                      className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors cursor-pointer border-none bg-transparent"
+                                    >
                                       <Pencil className="w-4 h-4" />
                                     </button>
                                     <button
@@ -1345,12 +1733,25 @@ export default function SellerDashboard() {
                                     >
                                       <ImageIcon className="w-4 h-4" />
                                     </button>
-                                    <button onClick={() => handleDeleteProduct(p.id)} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors cursor-pointer border-none bg-transparent">
+                                    <button
+                                      onClick={() => handleDeleteProduct(p)}
+                                      className="p-1.5 text-gray-400 hover:text-red-500 transition-colors cursor-pointer border-none bg-transparent"
+                                      title="Delete"
+                                    >
                                       <Trash2 className="w-4 h-4" />
                                     </button>
                                   </div>
                                 </td>
                               </tr>
+                              {p.rejection_reason ? (
+                                <tr key={`rej-${p.id}`} className="bg-red-50/50">
+                                  <td className="px-6 py-3" colSpan={6}>
+                                    <p className="text-xs text-red-700">
+                                      <span className="font-bold">Rejected by admin:</span> {p.rejection_reason}
+                                    </p>
+                                  </td>
+                                </tr>
+                              ) : null}
                               {imageUploadProduct === p.id && (
                                 <tr key={`img-${p.id}`} className="bg-teal-50/40">
                                   <td className="px-6 py-4" colSpan={6}>
@@ -1410,8 +1811,10 @@ export default function SellerDashboard() {
                       >
                         <option value="">All</option>
                         <option value="NEW">New</option>
-                        <option value="READ">Read</option>
-                        <option value="REPLIED">Replied</option>
+                        <option value="CONTACTED">Contacted</option>
+                        <option value="QUOTED">Quoted</option>
+                        <option value="ACCEPTED">Accepted</option>
+                        <option value="REJECTED">Rejected</option>
                         <option value="CLOSED">Closed</option>
                       </select>
                     </div>
@@ -1433,7 +1836,10 @@ export default function SellerDashboard() {
                             {enquiries.map((e) => (
                               <button
                                 key={e.id}
-                                onClick={() => setSelectedEnquiry(e)}
+                                onClick={() => {
+                                  setSelectedEnquiry(e);
+                                  setQuotationForm(quotationFormFor(e));
+                                }}
                                 className={`w-full p-4 text-left hover:bg-gray-50 transition-colors cursor-pointer border-none bg-transparent ${
                                   selectedEnquiry?.id === e.id ? "bg-emerald-50 border-l-4 border-l-emerald-500" : ""
                                 }`}
@@ -1443,6 +1849,10 @@ export default function SellerDashboard() {
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                     e.status === "NEW" ? "bg-blue-100 text-blue-700" :
                                     e.status === "CONTACTED" ? "bg-amber-100 text-amber-700" :
+                                    e.status === "QUOTED" ? "bg-violet-100 text-violet-700" :
+                                    e.status === "ACCEPTED" ? "bg-emerald-100 text-emerald-700" :
+                                    e.status === "REJECTED" ? "bg-red-100 text-red-700" :
+                                    e.status === "CLOSED" ? "bg-gray-100 text-gray-500" :
                                     "bg-gray-100 text-gray-500"
                                   }`}>
                                     {e.status}
@@ -1474,6 +1884,9 @@ export default function SellerDashboard() {
                               >
                                 <option value="NEW">New</option>
                                 <option value="CONTACTED">Contacted</option>
+                                <option value="QUOTED">Quoted</option>
+                                <option value="ACCEPTED">Accepted</option>
+                                <option value="REJECTED">Rejected</option>
                                 <option value="CLOSED">Closed</option>
                               </select>
                               <button onClick={() => setSelectedEnquiry(null)} className="p-1.5 text-gray-400 hover:text-gray-600 lg:hidden cursor-pointer border-none bg-transparent">
@@ -1484,6 +1897,18 @@ export default function SellerDashboard() {
 
                           <div className="bg-gray-50 rounded-xl p-4 mb-4">
                             <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedEnquiry.message || "No message"}</p>
+                            {selectedEnquiry.requirement && (
+                              <p className="text-sm text-gray-700 mt-2">
+                                <span className="font-semibold text-gray-800">Requirement:</span>{" "}
+                                {selectedEnquiry.requirement}
+                              </p>
+                            )}
+                            {selectedEnquiry.location && (
+                              <p className="text-sm text-gray-700 mt-1">
+                                <span className="font-semibold text-gray-800">Location:</span>{" "}
+                                {selectedEnquiry.location}
+                              </p>
+                            )}
                           </div>
 
                           {selectedEnquiry.product_name && (
@@ -1495,39 +1920,153 @@ export default function SellerDashboard() {
 
                           {/* Send Quotation */}
                           <div className="border-t border-gray-200 pt-4 mt-4">
-                            <h5 className="text-sm font-bold text-gray-900 mb-3">Send Quotation</h5>
+                            <h5 className="text-sm font-bold text-gray-900 mb-1">Send Quotation</h5>
+                            <p className="text-xs text-gray-500 mb-3">
+                              Build a quote the buyer can accept or reject.
+                            </p>
+
+                            {selectedEnquiry.quantity > 1 && (
+                              <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
+                                Buyer requested{" "}
+                                <span className="font-bold">
+                                  {selectedEnquiry.quantity} units
+                                </span>
+                                {selectedEnquiry.product_name
+                                  ? ` of ${selectedEnquiry.product_name}`
+                                  : ""}
+                                {selectedEnquiry.service_name
+                                  ? ` of ${selectedEnquiry.service_name}`
+                                  : ""}
+                              </div>
+                            )}
+
                             <div className="grid grid-cols-2 gap-3 mb-3">
                               <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">Amount (₹)</label>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                  Quantity
+                                </label>
                                 <input
                                   type="number"
-                                  value={quotationForm.amount}
-                                  onChange={(e) => setQuotationForm({ ...quotationForm, amount: e.target.value })}
+                                  min="1"
+                                  value={quotationForm.quantity}
+                                  onChange={(e) =>
+                                    setQuotationForm({
+                                      ...quotationForm,
+                                      quantity: e.target.value,
+                                    })
+                                  }
                                   className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                                  placeholder="0.00"
+                                  placeholder="20"
                                 />
                               </div>
                               <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">Valid Until</label>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                  Unit Price (₹)
+                                </label>
                                 <input
-                                  type="date"
-                                  value={quotationForm.valid_until}
-                                  onChange={(e) => setQuotationForm({ ...quotationForm, valid_until: e.target.value })}
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={quotationForm.unit_price}
+                                  onChange={(e) =>
+                                    setQuotationForm({
+                                      ...quotationForm,
+                                      unit_price: e.target.value,
+                                    })
+                                  }
                                   className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                                  placeholder="120.00"
                                 />
                               </div>
                             </div>
+
+                            {/* Live total */}
+                            <div className="flex items-center justify-between px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl mb-3">
+                              <span className="text-xs font-bold text-emerald-700">
+                                Total
+                              </span>
+                              <span className="text-lg font-extrabold text-emerald-700">
+                                {quotationTotal !== null
+                                  ? `₹${quotationTotal.toLocaleString()}`
+                                  : "—"}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 mb-3">
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                  Delivery (days)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="365"
+                                  value={quotationForm.delivery_days}
+                                  onChange={(e) =>
+                                    setQuotationForm({
+                                      ...quotationForm,
+                                      delivery_days: e.target.value,
+                                    })
+                                  }
+                                  className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                                  placeholder="2"
+                                />
+                                <p className="text-[10px] text-gray-400 mt-1">
+                                  0 = same day
+                                </p>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                  Valid For (days)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="365"
+                                  value={quotationForm.valid_days}
+                                  onChange={(e) =>
+                                    setQuotationForm({
+                                      ...quotationForm,
+                                      valid_days: e.target.value,
+                                    })
+                                  }
+                                  className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                                  placeholder="7"
+                                />
+                                <p className="text-[10px] text-gray-400 mt-1">
+                                  Quotation expires after this
+                                </p>
+                              </div>
+                            </div>
+
                             <textarea
-                              rows="3"
+                              rows="2"
                               value={quotationForm.description}
-                              onChange={(e) => setQuotationForm({ ...quotationForm, description: e.target.value })}
+                              onChange={(e) =>
+                                setQuotationForm({
+                                  ...quotationForm,
+                                  description: e.target.value,
+                                })
+                              }
                               className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none mb-3"
-                              placeholder="Write your quotation message..."
+                              placeholder="Description — e.g. 9W LED bulbs, energy efficient"
+                            />
+                            <textarea
+                              rows="2"
+                              value={quotationForm.terms}
+                              onChange={(e) =>
+                                setQuotationForm({
+                                  ...quotationForm,
+                                  terms: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none mb-3"
+                              placeholder="Terms — e.g. Payment on delivery, 1 year warranty"
                             />
                             <button
                               onClick={handleSendQuotation}
                               disabled={sendingQuotation}
-                              className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md disabled:opacity-50 cursor-pointer border-none"
+                              className="w-full px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md disabled:opacity-50 cursor-pointer border-none"
                             >
                               {sendingQuotation ? "Sending..." : "Send Quotation"}
                             </button>
@@ -2081,6 +2620,78 @@ export default function SellerDashboard() {
                           />
                         </div>
                       </div>
+
+                      {/* Business location: powers the "Nearby Me" results. */}
+                      <div className="mt-5 rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/40 p-4">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div>
+                            <h5 className="text-sm font-bold text-gray-900">Business location</h5>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              Buyers searching &ldquo;Nearby Me&rdquo; only see businesses with a
+                              location set. Use your current position for the most accurate results.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleUseCurrentLocation}
+                            disabled={locatingProfile}
+                            className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {locatingProfile ? (
+                              <span className="w-3.5 h-3.5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <Navigation className="w-3.5 h-3.5" />
+                            )}
+                            {locatingProfile ? "Locating..." : "Use my location"}
+                          </button>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1.5">
+                              Latitude
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              value={profileForm.latitude ?? ""}
+                              onChange={(e) =>
+                                setProfileForm({
+                                  ...profileForm,
+                                  latitude:
+                                    e.target.value === "" ? null : parseFloat(e.target.value),
+                                })
+                              }
+                              className="w-full px-3 py-2.5 bg-white border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm"
+                              placeholder="e.g. 28.5700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1.5">
+                              Longitude
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              value={profileForm.longitude ?? ""}
+                              onChange={(e) =>
+                                setProfileForm({
+                                  ...profileForm,
+                                  longitude:
+                                    e.target.value === "" ? null : parseFloat(e.target.value),
+                                })
+                              }
+                              className="w-full px-3 py-2.5 bg-white border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm"
+                              placeholder="e.g. 77.3200"
+                            />
+                          </div>
+                        </div>
+                        {profileForm.latitude != null && profileForm.longitude != null && (
+                          <p className="mt-1.5 text-[11px] text-gray-500">
+                            Coordinates captured. Save the profile to start appearing in Nearby
+                            results.
+                          </p>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-400">To change your name or email, please contact support.</p>
                     </div>
                   </div>
@@ -2102,6 +2713,17 @@ export default function SellerDashboard() {
           )}
         </div>
       </div>
+
+      {/* Toast: an enquiry arrived while the seller was in the dashboard */}
+      {toastEnquiry && (
+        <div className="fixed top-5 right-5 z-[60] w-80 max-w-[calc(100vw-2.5rem)]">
+          <EnquiryNotificationCard
+            enquiry={toastEnquiry}
+            onView={viewEnquiryNotification}
+            onDismiss={() => setToastEnquiry(null)}
+          />
+        </div>
+      )}
     </div>
   );
 }

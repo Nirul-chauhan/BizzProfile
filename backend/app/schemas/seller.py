@@ -4,8 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.models.product import ProductStatus
-from app.models.service import ServiceStatus
+from app.models.product import ProductStatus, ProductApprovalStatus
+from app.models.service import ServiceStatus, ServiceApprovalStatus
 from app.models.enquiry import EnquiryStatus
 from app.models.quotation import QuotationStatus
 
@@ -38,13 +38,29 @@ class PaginationParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SellerDashboardStats(BaseModel):
+    """Live PostgreSQL counters scoped to the requesting seller's own records."""
+
+    # Listings
     total_products: int
     active_products: int
+    best_seller_products: int
     total_services: int
     active_services: int
+    # Pipeline
+    pending_approval_products: int
+    pending_approval_services: int
+    # Enquiries
+    total_enquiries: int
+    pending_enquiries: int
     new_enquiries: int
+    # Commercial
+    total_quotations: int
     pending_quotations: int
     accepted_quotations: int
+    # Media
+    promotional_videos: int
+    approved_promotional_videos: int
+    # Profile health
     profile_completion: int
     verification_status: str
 
@@ -222,6 +238,13 @@ class SellerProfileResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SellerProductCreate(BaseModel):
+    """Seller-supplied product fields.
+
+    `status`, `approval_status` and the merchandising flags (is_trending /
+    is_best_seller) are deliberately absent: a new listing always starts as a
+    DRAFT awaiting admin approval, and merchandising is an admin decision.
+    """
+
     name: str
     category_id: int
     subcategory_id: int | None = None
@@ -229,7 +252,6 @@ class SellerProductCreate(BaseModel):
     price: float | None = None
     price_unit: str | None = None
     is_available: bool = True
-    status: str = "ACTIVE"
 
     @field_validator("name")
     @classmethod
@@ -246,16 +268,10 @@ class SellerProductCreate(BaseModel):
             raise ValueError("price must be non-negative")
         return v
 
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str) -> str:
-        allowed = {s.value for s in ProductStatus}
-        if v not in allowed:
-            raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
-        return v
-
 
 class SellerProductUpdate(BaseModel):
+    """Editable product fields. Approval and merchandising fields are admin-only."""
+
     name: str | None = None
     category_id: int | None = None
     subcategory_id: int | None = None
@@ -263,7 +279,6 @@ class SellerProductUpdate(BaseModel):
     price: float | None = None
     price_unit: str | None = None
     is_available: bool | None = None
-    status: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -279,15 +294,6 @@ class SellerProductUpdate(BaseModel):
     def validate_price(cls, v: float | None) -> float | None:
         if v is not None and v < 0:
             raise ValueError("price must be non-negative")
-        return v
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str | None) -> str | None:
-        if v is not None:
-            allowed = {s.value for s in ProductStatus}
-            if v not in allowed:
-                raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
         return v
 
 
@@ -318,6 +324,10 @@ class SellerProductResponse(BaseModel):
     best_seller_order: int = 0
     trending_order: int = 0
     status: str
+    approval_status: str = "PENDING"
+    rejection_reason: str | None = None
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     images: list[SellerProductImageResponse] = []
@@ -330,6 +340,12 @@ class SellerProductResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SellerServiceCreate(BaseModel):
+    """Seller-supplied service fields.
+
+    As with products, `status`, `approval_status` and the merchandising flags
+    are admin-only. A new service always starts unpublished and pending review.
+    """
+
     name: str
     category_id: int
     subcategory_id: int | None = None
@@ -339,9 +355,6 @@ class SellerServiceCreate(BaseModel):
     price_max: float | None = None
     price_unit: str | None = None
     is_available: bool = True
-    is_trending: bool = False
-    is_featured: bool = False
-    status: str = "ACTIVE"
 
     @field_validator("name")
     @classmethod
@@ -351,19 +364,11 @@ class SellerServiceCreate(BaseModel):
             raise ValueError("name must be between 1 and 255 characters")
         return v
 
-    @field_validator("price_min", "price_max")
+    @field_validator("price", "price_min", "price_max")
     @classmethod
     def validate_prices(cls, v: float | None) -> float | None:
         if v is not None and v < 0:
             raise ValueError("price must be non-negative")
-        return v
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str) -> str:
-        allowed = {s.value for s in ServiceStatus}
-        if v not in allowed:
-            raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
         return v
 
     @model_validator(mode="after")
@@ -375,6 +380,8 @@ class SellerServiceCreate(BaseModel):
 
 
 class SellerServiceUpdate(BaseModel):
+    """Editable service fields. Approval and merchandising fields are admin-only."""
+
     name: str | None = None
     category_id: int | None = None
     subcategory_id: int | None = None
@@ -384,9 +391,6 @@ class SellerServiceUpdate(BaseModel):
     price_max: float | None = None
     price_unit: str | None = None
     is_available: bool | None = None
-    is_trending: bool | None = None
-    is_featured: bool | None = None
-    status: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -397,21 +401,19 @@ class SellerServiceUpdate(BaseModel):
                 raise ValueError("name must be between 1 and 255 characters")
         return v
 
-    @field_validator("price_min", "price_max")
+    @field_validator("price", "price_min", "price_max")
     @classmethod
     def validate_prices(cls, v: float | None) -> float | None:
         if v is not None and v < 0:
             raise ValueError("price must be non-negative")
         return v
 
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str | None) -> str | None:
-        if v is not None:
-            allowed = {s.value for s in ServiceStatus}
-            if v not in allowed:
-                raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
-        return v
+    @model_validator(mode="after")
+    def validate_price_range(self):
+        if self.price_min is not None and self.price_max is not None:
+            if self.price_min > self.price_max:
+                raise ValueError("price_min must be <= price_max")
+        return self
 
 
 class SellerServiceResponse(BaseModel):
@@ -420,6 +422,7 @@ class SellerServiceResponse(BaseModel):
     category_id: int
     subcategory_id: int | None
     name: str
+    slug: str | None = None
     description: str | None
     price_min: float | None
     price_max: float | None
@@ -428,10 +431,50 @@ class SellerServiceResponse(BaseModel):
     is_trending: bool
     is_featured: bool
     status: str
+    approval_status: str = "PENDING"
+    rejection_reason: str | None = None
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Listing filters (approval workflow)
+# ---------------------------------------------------------------------------
+
+class SellerProductFilter(BaseModel):
+    approval_status: str | None = None
+    search: str | None = None
+
+    @field_validator("approval_status")
+    @classmethod
+    def validate_approval_status(cls, v: str | None) -> str | None:
+        if v is not None:
+            allowed = {s.value for s in ProductApprovalStatus}
+            if v not in allowed:
+                raise ValueError(
+                    f"approval_status must be one of: {', '.join(sorted(allowed))}"
+                )
+        return v
+
+
+class SellerServiceFilter(BaseModel):
+    approval_status: str | None = None
+    search: str | None = None
+
+    @field_validator("approval_status")
+    @classmethod
+    def validate_approval_status(cls, v: str | None) -> str | None:
+        if v is not None:
+            allowed = {s.value for s in ServiceApprovalStatus}
+            if v not in allowed:
+                raise ValueError(
+                    f"approval_status must be one of: {', '.join(sorted(allowed))}"
+                )
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -502,12 +545,22 @@ class SellerBusinessHourResponse(BaseModel):
 class SellerEnquiryResponse(BaseModel):
     id: int
     buyer_id: int
+    seller_id: int
     profile_id: int
     product_id: int | None
     service_id: int | None
     requirement_id: int | None
+    requirement: str | None = None
+    location: str | None = None
     message: str
+    quantity: int
     status: str
+    buyer_name: str | None = None
+    buyer_email: str | None = None
+    buyer_city: str | None = None
+    buyer_location: str | None = None
+    product_name: str | None = None
+    service_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -532,29 +585,140 @@ class SellerEnquiryUpdateStatus(BaseModel):
 
 class SellerQuotationCreate(BaseModel):
     enquiry_id: int
-    amount: float
-    description: str | None = None
-    valid_until: datetime | None = None
-
-    @field_validator("amount")
-    @classmethod
-    def validate_amount(cls, v: float) -> float:
-        if v <= 0:
-            raise ValueError("amount must be positive")
-        return v
-
-
-class SellerQuotationUpdate(BaseModel):
+    # A quotation can be priced one of two ways:
+    #   * per unit  -> quantity + unit_price (total is derived)
+    #   * lump sum  -> amount on its own
+    # Providing both is allowed, but then they must agree so the seller cannot
+    # quote a total that contradicts its own line items.
+    quantity: int | None = None
+    unit_price: float | None = None
     amount: float | None = None
     description: str | None = None
+    terms: str | None = None
+    delivery_days: int | None = None
+    valid_days: int | None = None
     valid_until: datetime | None = None
-    status: str | None = None
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 1_000_000):
+            raise ValueError("quantity must be between 1 and 1000000")
+        return v
+
+    @field_validator("unit_price")
+    @classmethod
+    def validate_unit_price(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("unit_price must be positive")
+        return v
 
     @field_validator("amount")
     @classmethod
     def validate_amount(cls, v: float | None) -> float | None:
         if v is not None and v <= 0:
             raise ValueError("amount must be positive")
+        return v
+
+    @field_validator("delivery_days")
+    @classmethod
+    def validate_delivery_days(cls, v: int | None) -> int | None:
+        if v is not None and (v < 0 or v > 365):
+            raise ValueError("delivery_days must be between 0 and 365")
+        return v
+
+    @field_validator("valid_days")
+    @classmethod
+    def validate_valid_days(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 365):
+            raise ValueError("valid_days must be between 1 and 365")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if len(v) > 2000:
+                raise ValueError("description must be at most 2000 characters")
+        return v or None
+
+    @field_validator("terms")
+    @classmethod
+    def validate_terms(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if len(v) > 2000:
+                raise ValueError("terms must be at most 2000 characters")
+        return v or None
+
+    @model_validator(mode="after")
+    def check_pricing(self) -> "SellerQuotationCreate":
+        if self.quantity is None and self.unit_price is None and self.amount is None:
+            raise ValueError(
+                "provide quantity and unit_price, or a total amount"
+            )
+        if self.unit_price is not None and self.quantity is None:
+            raise ValueError("unit_price requires quantity")
+        if self.quantity is not None and self.unit_price is None and self.amount is None:
+            raise ValueError("quantity requires unit_price or amount")
+        if (
+            self.quantity is not None
+            and self.unit_price is not None
+            and self.amount is not None
+        ):
+            expected = round(self.quantity * self.unit_price, 2)
+            if abs(expected - self.amount) > 0.01:
+                raise ValueError(
+                    f"amount ({self.amount}) does not match quantity x unit_price ({expected})"
+                )
+        return self
+
+
+class SellerQuotationUpdate(BaseModel):
+    quantity: int | None = None
+    unit_price: float | None = None
+    amount: float | None = None
+    description: str | None = None
+    terms: str | None = None
+    delivery_days: int | None = None
+    valid_days: int | None = None
+    valid_until: datetime | None = None
+    status: str | None = None
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 1_000_000):
+            raise ValueError("quantity must be between 1 and 1000000")
+        return v
+
+    @field_validator("unit_price")
+    @classmethod
+    def validate_unit_price(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("unit_price must be positive")
+        return v
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("amount must be positive")
+        return v
+
+    @field_validator("delivery_days")
+    @classmethod
+    def validate_delivery_days(cls, v: int | None) -> int | None:
+        if v is not None and (v < 0 or v > 365):
+            raise ValueError("delivery_days must be between 0 and 365")
+        return v
+
+    @field_validator("valid_days")
+    @classmethod
+    def validate_valid_days(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 365):
+            raise ValueError("valid_days must be between 1 and 365")
         return v
 
     @field_validator("status")
@@ -573,13 +737,41 @@ class SellerQuotationResponse(BaseModel):
     seller_id: int
     buyer_id: int
     amount: float
+    quantity: int
+    unit_price: float | None = None
+    delivery_days: int | None = None
+    valid_days: int | None = None
     description: str | None
+    terms: str | None = None
     valid_until: datetime | None
     status: str
+    is_expired: bool = False
+    quantity_label: str = ""
+    delivery_display: str | None = None
+    buyer_name: str | None = None
+    business_name: str | None = None
+    product_name: str | None = None
+    service_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SellerEnquiryListResponse(BaseModel):
+    items: list[SellerEnquiryResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class SellerQuotationListResponse(BaseModel):
+    items: list[SellerQuotationResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 # ---------------------------------------------------------------------------

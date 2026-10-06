@@ -2,17 +2,19 @@
 from typing import Any
 
 from sqlalchemy import func, select, and_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.biz_profile import BizProfile
 from app.models.product import Product
 from app.models.service import BizService
 from app.models.enquiry import Enquiry
-from app.models.quotation import Quotation
+from app.models.quotation import Quotation, QuotationStatus
 from app.models.requirement import Requirement
 from app.models.message import Message
 from app.models.favorite import Favorite
 from app.models.user import User
+from app.models.notification import NotificationType
+from app.services.notifications import create_notification
 
 
 class BuyerError(Exception):
@@ -241,14 +243,30 @@ class BuyerService:
 
         enquiry = Enquiry(
             buyer_id=user_id,
+            seller_id=profile.user_id,
             profile_id=data["profile_id"],
             product_id=data.get("product_id"),
             service_id=data.get("service_id"),
             requirement_id=data.get("requirement_id"),
+            requirement=(data.get("requirement") or "").strip() or None,
+            location=(data.get("location") or "").strip() or None,
             message=data["message"].strip(),
+            quantity=data.get("quantity", 1),
             status="NEW",
         )
         self.db.add(enquiry)
+        self.db.flush()
+        create_notification(
+            self.db,
+            user_id=profile.user_id,
+            type=NotificationType.ENQUIRY.value,
+            title="New enquiry received",
+            message=(
+                f"{enquiry.buyer_name or f'User {user_id}'} sent an enquiry about "
+                f"{enquiry.product_name or enquiry.service_name or 'your listing'}."
+            ),
+            enquiry_id=enquiry.id,
+        )
         self.db.commit()
         self.db.refresh(enquiry)
         return enquiry
@@ -257,6 +275,12 @@ class BuyerService:
         query = (
             select(Enquiry)
             .where(Enquiry.buyer_id == user_id)
+            .options(
+                joinedload(Enquiry.seller),
+                joinedload(Enquiry.biz_profile),
+                joinedload(Enquiry.product),
+                joinedload(Enquiry.service),
+            )
             .order_by(Enquiry.created_at.desc())
         )
         return self._paginate(query, page, page_size)
@@ -334,9 +358,26 @@ class BuyerService:
         query = (
             select(Quotation)
             .where(Quotation.buyer_id == user_id)
+            .options(
+                joinedload(Quotation.buyer),
+                joinedload(Quotation.seller),
+                joinedload(Quotation.enquiry).joinedload(Enquiry.biz_profile),
+                joinedload(Quotation.enquiry).joinedload(Enquiry.product),
+                joinedload(Quotation.enquiry).joinedload(Enquiry.service),
+            )
             .order_by(Quotation.created_at.desc())
         )
-        return self._paginate(query, page, page_size)
+        result = self._paginate(query, page, page_size)
+
+        # Show the buyer reality: anything past its validity window is EXPIRED.
+        stale = [q for q in result["items"] if q.is_expired]
+        if stale:
+            for quote in stale:
+                quote.status = QuotationStatus.EXPIRED.value
+            self.db.commit()
+            for quote in stale:
+                self.db.refresh(quote)
+        return result
 
     def get_quotation(self, user_id: int, quotation_id: int) -> Quotation:
         quote = self.db.get(Quotation, quotation_id)
@@ -346,8 +387,20 @@ class BuyerService:
             raise BuyerError("You do not own this quotation.")
         return quote
 
+    def _settle_expiry(self, quote: Quotation) -> None:
+        """Mark an open quote EXPIRED once its validity window has passed.
+
+        A buyer must not be able to accept a price the seller no longer
+        honours, so this runs before every accept/reject decision.
+        """
+        if quote.is_expired:
+            quote.status = QuotationStatus.EXPIRED.value
+            self.db.commit()
+            self.db.refresh(quote)
+
     def accept_quotation(self, user_id: int, quotation_id: int) -> Quotation:
         quote = self.get_quotation(user_id, quotation_id)
+        self._settle_expiry(quote)
         allowed = {"PENDING", "SENT"}
         if quote.status not in allowed:
             raise BuyerError(
@@ -355,12 +408,27 @@ class BuyerService:
                 f"Allowed: {', '.join(sorted(allowed))}"
             )
         quote.status = "ACCEPTED"
+        if quote.enquiry is not None and quote.enquiry.status != "CLOSED":
+            quote.enquiry.status = "ACCEPTED"
+        create_notification(
+            self.db,
+            user_id=quote.seller_id,
+            type=NotificationType.QUOTATION_ACCEPTED.value,
+            title="Quotation accepted",
+            message=(
+                f"{quote.buyer_name or f'Buyer {user_id}'} accepted your quotation "
+                f"for {quote.enquiry.product_name or quote.enquiry.service_name if quote.enquiry else 'your listing'}."
+            ),
+            enquiry_id=quote.enquiry_id,
+            quotation_id=quote.id,
+        )
         self.db.commit()
         self.db.refresh(quote)
         return quote
 
     def reject_quotation(self, user_id: int, quotation_id: int) -> Quotation:
         quote = self.get_quotation(user_id, quotation_id)
+        self._settle_expiry(quote)
         allowed = {"PENDING", "SENT"}
         if quote.status not in allowed:
             raise BuyerError(
@@ -368,6 +436,20 @@ class BuyerService:
                 f"Allowed: {', '.join(sorted(allowed))}"
             )
         quote.status = "REJECTED"
+        if quote.enquiry is not None and quote.enquiry.status != "CLOSED":
+            quote.enquiry.status = "REJECTED"
+        create_notification(
+            self.db,
+            user_id=quote.seller_id,
+            type=NotificationType.QUOTATION_REJECTED.value,
+            title="Quotation rejected",
+            message=(
+                f"{quote.buyer_name or f'Buyer {user_id}'} rejected your quotation "
+                f"for {quote.enquiry.product_name or quote.enquiry.service_name if quote.enquiry else 'your listing'}."
+            ),
+            enquiry_id=quote.enquiry_id,
+            quotation_id=quote.id,
+        )
         self.db.commit()
         self.db.refresh(quote)
         return quote

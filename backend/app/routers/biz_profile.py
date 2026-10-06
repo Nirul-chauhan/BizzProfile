@@ -150,7 +150,11 @@ def update_profile(
     detail_kwargs = {}
     for field in detail_fields:
         if field in update_data:
-            detail_kwargs[field] = update_data.pop(field).model_dump() if update_data[field] is not None else None
+            # request.model_dump() flattens nested models into plain dicts, so
+            # read the sub-model off the request itself before dumping it.
+            value = getattr(request, field, None)
+            detail_kwargs[field] = value.model_dump() if value is not None else None
+            update_data.pop(field)
 
     try:
         profile = svc.update(

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ShieldCheck, Building2, Play, X, Package, Send, MapPin, TrendingUp, Phone } from "lucide-react";
-import { getFeaturedBusinesses, getTrendingVideos, getBestSellers, getTrendingProducts, getTrendingCategories, buyerCreateEnquiry } from "../api";
-import { useAuth } from "../context/AuthContext";
+import { getTrendingVideos, getBestSellers, getTrendingProducts, getTrendingCategories, getAuthToken } from "../api";
+import EnquiryFormModal from "./EnquiryFormModal";
 
 /* ─── BEST SELLERS ────────────────────────────────────── */
 export function BestSellersSection() {
@@ -11,12 +11,7 @@ export function BestSellersSection() {
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
   const navigate = useNavigate();
-  const { isAuthenticated, isBuyer } = useAuth();
   const [inquiryProduct, setInquiryProduct] = useState(null);
-  const [inquiryMsg, setInquiryMsg] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [inquiryError, setInquiryError] = useState("");
 
   useEffect(() => {
     getBestSellers({ page_size: 20 })
@@ -29,26 +24,6 @@ export function BestSellersSection() {
     if (scrollRef.current) {
       scrollRef.current.scrollBy({ left: dir * 300, behavior: "smooth" });
     }
-  };
-
-  const handleInquiry = async () => {
-    if (!inquiryMsg.trim()) return;
-    if (!isAuthenticated) return navigate("/login");
-    if (!isBuyer) { setInquiryError("Only buyers can send enquiries."); return; }
-    setSending(true);
-    setInquiryError("");
-    try {
-      await buyerCreateEnquiry({
-        profile_id: inquiryProduct.profile_id,
-        product_id: inquiryProduct.id,
-        message: inquiryMsg.trim(),
-      });
-      setSent(true);
-      setTimeout(() => { setInquiryProduct(null); setSent(false); setInquiryMsg(""); }, 2500);
-    } catch (e) {
-      setInquiryError(e.message || "Failed to send");
-    }
-    setSending(false);
   };
 
   if (loading) {
@@ -133,7 +108,7 @@ export function BestSellersSection() {
                     <Link to={`/products/${prod.id}`} className="flex-1 py-1.5 bg-gray-900 text-white text-[11px] font-bold rounded-lg text-center hover:bg-gray-800 transition-colors no-underline">
                       View Details
                     </Link>
-                    <button onClick={(e) => { e.stopPropagation(); if (!isAuthenticated) return navigate("/login"); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-orange-50 text-orange-700 text-[11px] font-bold rounded-lg hover:bg-orange-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
+                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!getAuthToken()) return navigate("/login"); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-orange-50 text-orange-700 text-[11px] font-bold rounded-lg hover:bg-orange-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
                       <Send className="w-3 h-3" />Inquiry
                     </button>
                   </div>
@@ -145,65 +120,34 @@ export function BestSellersSection() {
       </section>
 
       {/* Inquiry Modal */}
-      {inquiryProduct && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !sending && setInquiryProduct(null)}>
-          <div className="bg-white rounded-xl max-w-lg w-full shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Send Inquiry</h3>
-                <p className="text-xs text-gray-500 mt-0.5">About {inquiryProduct.name}</p>
-              </div>
-              <button onClick={() => setInquiryProduct(null)} className="text-gray-400 hover:text-gray-600 border-none bg-transparent cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            {sent ? (
-              <div className="p-8 text-center">
-                <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3"><Send className="w-5 h-5 text-emerald-600" /></div>
-                <h4 className="text-base font-bold text-gray-900 mb-1">Inquiry Sent!</h4>
-                <p className="text-sm text-gray-500">The seller will respond soon.</p>
-              </div>
-            ) : (
-              <div className="p-6 space-y-4">
-                {inquiryError && <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-lg">{inquiryError}</p>}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Your Message *</label>
-                  <textarea
-                    value={inquiryMsg}
-                    onChange={(e) => setInquiryMsg(e.target.value)}
-                    rows={4}
-                    placeholder="Describe what you're looking for..."
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none resize-none"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button onClick={() => setInquiryProduct(null)} className="flex-1 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 border-none cursor-pointer">Cancel</button>
-                  <button onClick={handleInquiry} disabled={sending || !inquiryMsg.trim()} className="flex-1 py-2.5 text-sm font-bold text-white bg-orange-500 rounded-lg hover:bg-orange-600 disabled:opacity-50 border-none cursor-pointer">{sending ? "Sending..." : "Send Inquiry"}</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <EnquiryFormModal
+        open={!!inquiryProduct}
+        target={inquiryProduct ? { type: "product", id: inquiryProduct.id, name: inquiryProduct.name, profile_id: inquiryProduct.profile_id } : null}
+        onClose={() => setInquiryProduct(null)}
+      />
     </>
   );
 }
 
 /* ─── TRENDING CATEGORIES ────────────────────────────────────── */
-export function TrendingCategoriesSection() {
+export function TrendingProductsSection() {
   const [products, setProducts] = useState([]);
+  const [isRealTrending, setIsRealTrending] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
   const navigate = useNavigate();
-  const { isAuthenticated, isBuyer } = useAuth();
   const [inquiryProduct, setInquiryProduct] = useState(null);
-  const [inquiryMsg, setInquiryMsg] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [inquiryError, setInquiryError] = useState("");
 
   useEffect(() => {
     getTrendingProducts(7)
-      .then((data) => setProducts(Array.isArray(data) ? data : []))
+      .then((data) => {
+        const items = Array.isArray(data) ? data : [];
+        setProducts(items);
+        // The endpoint falls back to recent products when nothing is flagged
+        // trending; every item then reports is_trending=false.
+        setIsRealTrending(items.some((d) => d.is_trending));
+      })
       .catch((e) => setError(e.message || "Failed to load"))
       .finally(() => setLoading(false));
   }, []);
@@ -212,26 +156,6 @@ export function TrendingCategoriesSection() {
     if (scrollRef.current) {
       scrollRef.current.scrollBy({ left: dir * 300, behavior: "smooth" });
     }
-  };
-
-  const handleInquiry = async () => {
-    if (!inquiryMsg.trim()) return;
-    if (!isAuthenticated) return navigate("/login");
-    if (!isBuyer) { setInquiryError("Only buyers can send enquiries."); return; }
-    setSending(true);
-    setInquiryError("");
-    try {
-      await buyerCreateEnquiry({
-        profile_id: inquiryProduct.profile_id,
-        product_id: inquiryProduct.id,
-        message: inquiryMsg.trim(),
-      });
-      setSent(true);
-      setTimeout(() => { setInquiryProduct(null); setSent(false); setInquiryMsg(""); }, 2500);
-    } catch (e) {
-      setInquiryError(e.message || "Failed to send");
-    }
-    setSending(false);
   };
 
   if (loading) {
@@ -270,9 +194,9 @@ export function TrendingCategoriesSection() {
             <div>
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-5 h-5 text-purple-600" />
-                <h2 className="text-2xl font-extrabold text-gray-900">Trending Categories</h2>
+                <h2 className="text-2xl font-extrabold text-gray-900">{isRealTrending ? "Trending Products" : "Recently Added Products"}</h2>
               </div>
-              <p className="text-sm text-gray-500 mt-1">Discover popular products from verified businesses</p>
+              <p className="text-sm text-gray-500 mt-1">{isRealTrending ? "Popular picks from verified businesses" : "The latest products from verified businesses"}</p>
             </div>
             <div className="flex gap-2">
               <button onClick={() => scroll(-1)} className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors cursor-pointer">
@@ -318,7 +242,7 @@ export function TrendingCategoriesSection() {
                     <Link to={`/products/${prod.id}`} className="flex-1 py-1.5 bg-purple-600 text-white text-[11px] font-bold rounded-lg text-center hover:bg-purple-700 transition-colors no-underline">
                       View Details
                     </Link>
-                    <button onClick={(e) => { e.stopPropagation(); if (!isAuthenticated) return navigate("/login"); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-purple-50 text-purple-700 text-[11px] font-bold rounded-lg hover:bg-purple-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
+                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!getAuthToken()) return navigate("/login"); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-purple-50 text-purple-700 text-[11px] font-bold rounded-lg hover:bg-purple-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
                       <Send className="w-3 h-3" />Inquiry
                     </button>
                   </div>
@@ -330,45 +254,128 @@ export function TrendingCategoriesSection() {
       </section>
 
       {/* Inquiry Modal */}
-      {inquiryProduct && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !sending && setInquiryProduct(null)}>
-          <div className="bg-white rounded-xl max-w-lg w-full shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Send Inquiry</h3>
-                <p className="text-xs text-gray-500 mt-0.5">About {inquiryProduct.name}</p>
-              </div>
-              <button onClick={() => setInquiryProduct(null)} className="text-gray-400 hover:text-gray-600 border-none bg-transparent cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            {sent ? (
-              <div className="p-8 text-center">
-                <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3"><Send className="w-5 h-5 text-emerald-600" /></div>
-                <h4 className="text-base font-bold text-gray-900 mb-1">Inquiry Sent!</h4>
-                <p className="text-sm text-gray-500">The seller will respond soon.</p>
-              </div>
-            ) : (
-              <div className="p-6 space-y-4">
-                {inquiryError && <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-lg">{inquiryError}</p>}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Your Message *</label>
-                  <textarea
-                    value={inquiryMsg}
-                    onChange={(e) => setInquiryMsg(e.target.value)}
-                    rows={4}
-                    placeholder="Describe what you're looking for..."
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button onClick={() => setInquiryProduct(null)} className="flex-1 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 border-none cursor-pointer">Cancel</button>
-                  <button onClick={handleInquiry} disabled={sending || !inquiryMsg.trim()} className="flex-1 py-2.5 text-sm font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 border-none cursor-pointer">{sending ? "Sending..." : "Send Inquiry"}</button>
-                </div>
-              </div>
-            )}
+      <EnquiryFormModal
+        open={!!inquiryProduct}
+        target={inquiryProduct ? { type: "product", id: inquiryProduct.id, name: inquiryProduct.name, profile_id: inquiryProduct.profile_id } : null}
+        onClose={() => setInquiryProduct(null)}
+      />
+    </>
+  );
+}
+
+/* ─── TRENDING CATEGORIES ─────────────────────────────────── */
+export function TrendingCategoriesSection() {
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    getTrendingCategories(7)
+      .then((data) => setCategories(Array.isArray(data) ? data : []))
+      .catch((e) => setError(e.message || "Failed to load"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const scroll = (dir) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollBy({ left: dir * 300, behavior: "smooth" });
+    }
+  };
+
+  if (loading) {
+    return (
+      <section className="py-12 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="h-7 w-56 bg-gray-100 rounded-lg animate-pulse mb-2" />
+          <div className="h-4 w-80 bg-gray-100 rounded-lg animate-pulse mb-6" />
+          <div className="flex gap-4 overflow-hidden">
+            {[1,2,3,4,5,6].map(i => (
+              <div key={i} className="flex-shrink-0 w-52 h-52 bg-gray-100 rounded-xl animate-pulse" />
+            ))}
           </div>
         </div>
-      )}
-    </>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="py-12 bg-white">
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <p className="text-gray-400 text-sm">{error}</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (categories.length === 0) return null;
+
+  return (
+    <section className="py-12 bg-white">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <div className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-purple-600" />
+              <h2 className="text-2xl font-extrabold text-gray-900">Trending Categories</h2>
+            </div>
+            <p className="text-sm text-gray-500 mt-1">Popular categories on BizzProfiles right now</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => scroll(-1)} className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors cursor-pointer">
+              <ChevronLeft className="w-5 h-5 text-gray-600" />
+            </button>
+            <button onClick={() => scroll(1)} className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors cursor-pointer">
+              <ChevronRight className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
+        </div>
+        <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-2" style={{ scrollbarWidth: "none" }}>
+          {categories.map((cat) => (
+            <div key={cat.id} className="flex-shrink-0 w-52 bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-lg hover:border-purple-200 transition-all group">
+              <Link to={`/categories/${cat.slug}`} className="block relative h-32 bg-gray-50 overflow-hidden no-underline">
+                {cat.product_image ? (
+                  <img src={cat.product_image} alt={cat.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                ) : cat.logo_url ? (
+                  <img src={cat.logo_url} alt={cat.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-50 to-pink-50">
+                    <Package className="w-10 h-10 text-purple-300" />
+                  </div>
+                )}
+                {cat.is_verified && (
+                  <div className="absolute top-2 right-2 bg-white/90 backdrop-blur-sm rounded-md px-1.5 py-0.5 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                    <span className="text-[9px] font-bold text-emerald-700">Verified</span>
+                  </div>
+                )}
+              </Link>
+              <div className="p-3">
+                <h3 className="text-sm font-bold text-gray-900 truncate mb-0.5 group-hover:text-purple-600">{cat.name}</h3>
+                {cat.product_name && (
+                  <p className="text-[11px] text-gray-400 truncate mb-1">{cat.product_name}</p>
+                )}
+                {cat.product_price != null && (
+                  <div className="flex items-center gap-1 mb-2">
+                    <span className="text-sm font-extrabold text-gray-900">{"\u20B9"}{cat.product_price.toLocaleString("en-IN")}</span>
+                    {cat.product_price_unit && <span className="text-[10px] text-gray-400">/ {cat.product_price_unit}</span>}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Link to={`/categories/${cat.slug}`} className="flex-1 py-1.5 bg-purple-600 text-white text-[11px] font-bold rounded-lg text-center hover:bg-purple-700 transition-colors no-underline">
+                    Browse
+                  </Link>
+                  <Link to={`/products/${cat.product_id}`} className="flex-1 py-1.5 bg-purple-50 text-purple-700 text-[11px] font-bold rounded-lg hover:bg-purple-100 transition-colors no-underline text-center">
+                    View
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 

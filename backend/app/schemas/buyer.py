@@ -212,7 +212,10 @@ class BuyerEnquiryCreate(BaseModel):
     product_id: int | None = None
     service_id: int | None = None
     requirement_id: int | None = None
+    requirement: str | None = None
+    location: str | None = None
     message: str
+    quantity: int = 1
 
     @field_validator("message")
     @classmethod
@@ -222,16 +225,33 @@ class BuyerEnquiryCreate(BaseModel):
             raise ValueError("message must be between 1 and 5000 characters")
         return v
 
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("quantity must be at least 1")
+        if v > 100000:
+            raise ValueError("quantity is too large")
+        return v
+
 
 class BuyerEnquiryResponse(BaseModel):
     id: int
     buyer_id: int
+    seller_id: int
     profile_id: int
     product_id: int | None
     service_id: int | None
     requirement_id: int | None
+    requirement: str | None = None
+    location: str | None = None
     message: str
+    quantity: int
     status: str
+    business_name: str | None = None
+    product_name: str | None = None
+    service_name: str | None = None
+    seller_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -282,13 +302,41 @@ class BuyerQuotationResponse(BaseModel):
     seller_id: int
     buyer_id: int
     amount: float
+    quantity: int
+    unit_price: float | None = None
+    delivery_days: int | None = None
+    valid_days: int | None = None
     description: str | None
+    terms: str | None = None
     valid_until: datetime | None
     status: str
+    is_expired: bool = False
+    quantity_label: str = ""
+    delivery_display: str | None = None
+    business_name: str | None = None
+    seller_name: str | None = None
+    product_name: str | None = None
+    service_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BuyerEnquiryListResponse(BaseModel):
+    items: list[BuyerEnquiryResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class BuyerQuotationListResponse(BaseModel):
+    items: list[BuyerQuotationResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 # ---------------------------------------------------------------------------

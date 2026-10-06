@@ -1,4 +1,6 @@
 """Admin Services management router."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -119,6 +121,30 @@ def _apply_filters(
     return q
 
 
+# ---------- Helper: approval side-effects ----------
+
+
+def _apply_approval(
+    svc: BizService, approval_status: str, rejection_reason: str | None, reviewer_id: int
+) -> None:
+    """Record the admin decision and mirror it onto the publish fields.
+
+    Approval is what puts a seller-submitted service on the public marketplace,
+    so the marketplace switches (status / is_published) are driven from here
+    rather than being trusted from the seller payload.
+    """
+    svc.approval_status = approval_status
+    svc.rejection_reason = rejection_reason
+    svc.reviewed_at = datetime.now(timezone.utc)
+    svc.reviewed_by_user_id = reviewer_id
+    if approval_status == ServiceApprovalStatus.APPROVED.value:
+        svc.status = ServiceStatus.ACTIVE.value
+        svc.is_published = True
+    else:
+        svc.status = ServiceStatus.DRAFT.value
+        svc.is_published = False
+
+
 # ---------- Endpoints ----------
 
 
@@ -203,11 +229,10 @@ def approve_service(
     svc = db.get(BizService, service_id)
     if not svc:
         raise HTTPException(status_code=404, detail="Service not found")
-    svc.approval_status = ServiceApprovalStatus.APPROVED.value
-    svc.rejection_reason = None
+    _apply_approval(svc, ServiceApprovalStatus.APPROVED.value, None, current_user.id)
     db.commit()
     db.refresh(svc)
-    return {"id": svc.id, "approval_status": svc.approval_status}
+    return {"id": svc.id, "approval_status": svc.approval_status, "status": svc.status}
 
 
 @router.patch("/{service_id}/reject")
@@ -220,11 +245,15 @@ def reject_service(
     svc = db.get(BizService, service_id)
     if not svc:
         raise HTTPException(status_code=404, detail="Service not found")
-    svc.approval_status = ServiceApprovalStatus.REJECTED.value
-    svc.rejection_reason = data.rejection_reason
+    _apply_approval(svc, ServiceApprovalStatus.REJECTED.value, data.rejection_reason, current_user.id)
     db.commit()
     db.refresh(svc)
-    return {"id": svc.id, "approval_status": svc.approval_status, "rejection_reason": svc.rejection_reason}
+    return {
+        "id": svc.id,
+        "approval_status": svc.approval_status,
+        "rejection_reason": svc.rejection_reason,
+        "status": svc.status,
+    }
 
 
 @router.patch("/{service_id}/toggle-trending")
@@ -305,12 +334,14 @@ def review_service_request(
     if data.action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
 
-    if data.action == "approve":
-        svc.approval_status = ServiceApprovalStatus.APPROVED.value
-        svc.rejection_reason = None
-    else:
-        svc.approval_status = ServiceApprovalStatus.REJECTED.value
-        svc.rejection_reason = data.rejection_reason
+    _apply_approval(
+        svc,
+        ServiceApprovalStatus.APPROVED.value
+        if data.action == "approve"
+        else ServiceApprovalStatus.REJECTED.value,
+        data.rejection_reason,
+        current_user.id,
+    )
 
     db.commit()
     db.refresh(svc)
@@ -318,4 +349,5 @@ def review_service_request(
         "id": svc.id,
         "approval_status": svc.approval_status,
         "rejection_reason": svc.rejection_reason,
+        "status": svc.status,
     }

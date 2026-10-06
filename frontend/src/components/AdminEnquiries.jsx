@@ -4,12 +4,14 @@ import { adminListEnquiries, adminUpdateEnquiryStatus } from "../api";
 
 const STATUS_COLORS = {
   NEW: "bg-amber-100 text-amber-700",
-  READ: "bg-blue-100 text-blue-700",
-  REPLIED: "bg-emerald-100 text-emerald-700",
+  CONTACTED: "bg-blue-100 text-blue-700",
+  QUOTED: "bg-violet-100 text-violet-700",
+  ACCEPTED: "bg-emerald-100 text-emerald-700",
+  REJECTED: "bg-red-100 text-red-700",
   CLOSED: "bg-gray-100 text-gray-600",
 };
 
-const STATUS_OPTIONS = ["ALL", "NEW", "READ", "REPLIED", "CLOSED"];
+const STATUS_OPTIONS = ["ALL", "NEW", "CONTACTED", "QUOTED", "ACCEPTED", "REJECTED", "CLOSED"];
 
 export default function AdminEnquiries() {
   const [items, setItems] = useState([]);

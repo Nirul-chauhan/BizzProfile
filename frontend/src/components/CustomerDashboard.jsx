@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
-import { getMyProfiles, getProfileDocuments, createProfile, getNearbyProfiles, getCategories, getSubcategories, searchProfiles, updateProfile, uploadProfilePic, removeProfilePic } from "../api";
+import { getMyProfiles, getProfileDocuments, createProfile, getCategories, getSubcategories, searchProfiles, updateProfile, uploadProfilePic, removeProfilePic } from "../api";
 import {
   LayoutDashboard,
   UserCircle,
@@ -50,7 +50,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Navigation,
-  Loader,
 } from "lucide-react";
 
 const NAV = [
@@ -116,11 +115,6 @@ export default function CustomerDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
-
-  const [nearbyLoading, setNearbyLoading] = useState(false);
-  const [nearbyResults, setNearbyResults] = useState([]);
-  const [nearbyError, setNearbyError] = useState("");
-  const [nearbyRadius, setNearbyRadius] = useState(10);
 
   const [createForm, setCreateForm] = useState({
     business_name: "",
@@ -309,50 +303,6 @@ export default function CustomerDashboard() {
       setSearchLoading(false);
     }
   };
-
-  const handleNearMe = useCallback(() => {
-    if (!navigator.geolocation) {
-      setNearbyError("Geolocation is not supported by your browser.");
-      return;
-    }
-    setNearbyLoading(true);
-    setNearbyError("");
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const { latitude, longitude } = position.coords;
-          const result = await getNearbyProfiles(latitude, longitude, nearbyRadius);
-          setNearbyResults(result.results || []);
-          if ((result.results || []).length === 0) {
-            setNearbyError("No businesses found nearby. Try increasing the search radius.");
-          }
-        } catch (err) {
-          console.error("Nearby search failed:", err);
-          setNearbyError("Failed to fetch nearby businesses. Please try again.");
-          setNearbyResults([]);
-        } finally {
-          setNearbyLoading(false);
-        }
-      },
-      (error) => {
-        setNearbyLoading(false);
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            setNearbyError("Location permission denied. Please enable location access in your browser settings.");
-            break;
-          case error.POSITION_UNAVAILABLE:
-            setNearbyError("Location information unavailable. Please try again.");
-            break;
-          case error.TIMEOUT:
-            setNearbyError("Location request timed out. Please try again.");
-            break;
-          default:
-            setNearbyError("An unknown error occurred while getting your location.");
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
-    );
-  }, [nearbyRadius]);
 
   const handleCreateProfile = async () => {
     if (!createForm.business_name.trim() || !createForm.category_id) {
@@ -1057,66 +1007,23 @@ export default function CustomerDashboard() {
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-gray-900">Find Businesses Near You</h3>
-                      <p className="text-xs text-gray-500">Uses your browser's geolocation to find nearby businesses</p>
+                      <p className="text-xs text-gray-500">Choose 1, 3, 5 or 10 km and see what is really around you</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Search Radius (km)</label>
-                      <select value={nearbyRadius} onChange={(e) => setNearbyRadius(Number(e.target.value))} className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900">
-                        <option value={5}>5 km</option>
-                        <option value={10}>10 km</option>
-                        <option value={25}>25 km</option>
-                        <option value={50}>50 km</option>
-                        <option value={100}>100 km</option>
-                      </select>
-                    </div>
-                    <button onClick={handleNearMe} disabled={nearbyLoading} className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/25 cursor-pointer border-none flex items-center gap-2 mt-5">
-                      {nearbyLoading ? <Loader className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
-                      {nearbyLoading ? "Searching..." : "Find Near Me"}
-                    </button>
-                  </div>
+                  {/* Single Nearby Me entry point. The /nearby page owns the
+                      1/3/5/10 km choice and does the real distance filtering
+                      against stored seller coordinates, so this section sends the
+                      customer there instead of running a second, differently
+                      configured nearby lookup. */}
+                  <button
+                    onClick={() => navigate("/nearby")}
+                    className="w-full px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/25 cursor-pointer border-none flex items-center justify-center gap-2"
+                  >
+                    <MapPin className="w-4 h-4" />
+                    Nearby Me
+                  </button>
                 </div>
               </div>
-
-              {nearbyError && (
-                <div className="max-w-3xl mx-auto mb-6">
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700 flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                    {nearbyError}
-                  </div>
-                </div>
-              )}
-
-              {nearbyResults.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Nearby Businesses ({nearbyResults.length})</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {nearbyResults.map((biz) => (
-                      <Link key={biz.id} to={`/enduser/business/${biz.slug}`} target="_blank" className="bg-white border border-slate-200 rounded-2xl p-5 hover:shadow-lg transition-all duration-300 no-underline">
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
-                            {biz.logo_url ? <img src={biz.logo_url} alt="" className="w-10 h-10 rounded-xl object-cover" /> : <Store className="w-5 h-5 text-blue-500" />}
-                          </div>
-                          <div className="flex-1">
-                            <h4 className="text-sm font-bold text-gray-900">{biz.business_name}</h4>
-                            <p className="text-xs text-gray-500">{biz.category?.name || "Business"}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-400 flex items-center gap-1"><MapPin className="w-3 h-3" /> {biz.city || "—"}</span>
-                          <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{biz.distance_km?.toFixed(1)} km</span>
-                        </div>
-                        {biz.is_verified && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-bold mt-2">
-                            <ShieldCheck className="w-3 h-3" /> Verified
-                          </span>
-                        )}
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           ) : activeNav === "documents" ? (
             /* ========== DOCUMENTS ========== */

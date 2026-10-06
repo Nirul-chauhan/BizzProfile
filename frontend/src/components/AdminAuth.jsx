@@ -9,7 +9,7 @@ import {
   AlertCircle,
   KeyRound,
 } from "lucide-react";
-import { login as loginApi, changePassword, seedAdmin } from "../api";
+import { login as loginApi, changePassword, seedAdmin, setAuthToken } from "../api";
 
 function OtpInput({ value, onChange, onSubmit }) {
   const refs = useRef(Array(6).fill(null));
@@ -88,6 +88,7 @@ export default function AdminAuth() {
       }
       localStorage.setItem("token", result.access_token);
       localStorage.setItem("user", JSON.stringify(user));
+      setAuthToken(result.access_token);
       if (user.is_first_login) {
         setMustChangePassword(true);
         setPendingUser(user);

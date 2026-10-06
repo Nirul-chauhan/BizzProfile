@@ -4,15 +4,15 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  DollarSign,
   Calendar,
-  Filter,
   Search,
   ArrowRight,
   Loader,
   AlertCircle,
   RefreshCw,
   Columns,
+  Truck,
+  X,
 } from "lucide-react";
 import {
   buyerListQuotations,
@@ -29,6 +29,13 @@ const STATUS_STYLES = {
   CANCELLED: "bg-gray-100 text-gray-500",
 };
 
+const rupees = (n) =>
+  n === null || n === undefined
+    ? "—"
+    : `₹${Number(n).toLocaleString("en-IN", {
+        maximumFractionDigits: 2,
+      })}`;
+
 function StatusBadge({ status }) {
   return (
     <span
@@ -41,7 +48,80 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function BuyerQuotations() {
+function isDecidable(q) {
+  return (q.status === "PENDING" || q.status === "SENT") && !q.is_expired;
+}
+
+// A quotation rendered the way a real business document reads: what was
+// quoted, at what unit price, what it totals, and on what terms.
+function QuotationBreakdown({ q, compact = false }) {
+  const rows = [
+    {
+      key: "qty",
+      label: "Quantity",
+      value: q.quantity_label || `${q.quantity} units`,
+      hide: q.quantity === 1 && !q.unit_price,
+    },
+    {
+      key: "unit",
+      label: "Unit Price",
+      value: rupees(q.unit_price),
+      hide: q.unit_price === null || q.unit_price === undefined,
+    },
+  ].filter((r) => !r.hide);
+
+  return (
+    <div className={compact ? "space-y-1" : "space-y-2"}>
+      {rows.map((r) => (
+        <div key={r.key} className="flex items-center justify-between text-sm">
+          <span className="text-gray-500">{r.label}</span>
+          <span className="font-medium text-gray-700">{r.value}</span>
+        </div>
+      ))}
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-gray-500">Total</span>
+        <span className="font-extrabold text-gray-900">{rupees(q.amount)}</span>
+      </div>
+    </div>
+  );
+}
+
+function QuotationTerms({ q }) {
+  const chips = [];
+  if (q.delivery_display) {
+    chips.push({ icon: Truck, label: `Delivery: ${q.delivery_display}` });
+  }
+  if (q.valid_days) {
+    chips.push({ icon: Clock, label: `Valid for ${q.valid_days} days` });
+  }
+  if (chips.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-3">
+      {chips.map((c) => {
+        const Icon = c.icon;
+        return (
+          <span
+            key={c.label}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium text-gray-700"
+          >
+            <Icon className="w-3.5 h-3.5 text-gray-400" />
+            {c.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// The "For: ..." line names what was quoted so the buyer can tell two quotes
+// apart at a glance.
+function QuotationSubject({ q }) {
+  const name = q.product_name || q.service_name;
+  if (!name) return null;
+  return <p className="text-xs text-gray-500 mb-3">For: {name}</p>;
+}
+
+export default function BuyerQuotations({ enquiryFilter = null, onClearEnquiryFilter }) {
   const [quotations, setQuotations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("ALL");
@@ -114,20 +194,43 @@ export default function BuyerQuotations() {
     selectedForCompare.includes(q.id)
   );
 
-  const filtered = quotations.filter((q) => {
-    if (filterStatus !== "ALL" && q.status !== filterStatus) return false;
+  const matchesStatusFilter = (q) => {
+    // Arriving from an enquiry means "just show me what this one got quoted".
+    if (enquiryFilter != null && q.enquiry_id !== enquiryFilter) return false;
+    if (filterStatus === "ALL") return true;
+    if (filterStatus === "SENT") return q.status === "PENDING" || q.status === "SENT";
+    if (filterStatus === "CLOSED")
+      return (
+        q.status === "REJECTED" ||
+        q.status === "EXPIRED" ||
+        q.status === "CANCELLED"
+      );
+    return q.status === filterStatus;
+  };
+
+  // Counts must respect the enquiry filter, otherwise the summary cards claim
+  // numbers the list below them does not contain.
+  const scopedQuotations = quotations.filter(
+    (q) => enquiryFilter == null || q.enquiry_id === enquiryFilter
+  );
+
+  const filtered = scopedQuotations.filter((q) => {
+    if (!matchesStatusFilter(q)) return false;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       return (
         (q.description || "").toLowerCase().includes(query) ||
+        (q.terms || "").toLowerCase().includes(query) ||
+        (q.business_name || "").toLowerCase().includes(query) ||
         String(q.amount).includes(query) ||
+        String(q.quantity).includes(query) ||
         String(q.id).includes(query)
       );
     }
     return true;
   });
 
-  const statusCounts = quotations.reduce((acc, q) => {
+  const statusCounts = scopedQuotations.reduce((acc, q) => {
     acc[q.status] = (acc[q.status] || 0) + 1;
     return acc;
   }, {});
@@ -163,19 +266,45 @@ export default function BuyerQuotations() {
         </div>
       </div>
 
+      {/* Scoped view banner — only shown when the buyer jumped here from an
+          enquiry, so they can tell why the list is short. */}
+      {enquiryFilter != null && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-violet-50 border border-violet-200 rounded-xl">
+          <span className="text-sm font-medium text-violet-800">
+            Showing quotations for Enquiry #{enquiryFilter}
+          </span>
+          <button
+            onClick={onClearEnquiryFilter}
+            className="inline-flex items-center gap-1 text-xs font-bold text-violet-700 hover:text-violet-900 cursor-pointer border-none bg-transparent"
+          >
+            <X className="w-3.5 h-3.5" /> Show all
+          </button>
+        </div>
+      )}
+
       {/* Status Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Total", count: quotations.length, color: "bg-gray-50 text-gray-700" },
-          { label: "Pending", count: statusCounts.PENDING || 0, color: "bg-amber-50 text-amber-700" },
-          { label: "Accepted", count: statusCounts.ACCEPTED || 0, color: "bg-emerald-50 text-emerald-700" },
-          { label: "Rejected", count: statusCounts.REJECTED || 0, color: "bg-red-50 text-red-700" },
+          { label: "Total", key: "ALL", count: scopedQuotations.length, color: "bg-gray-50 text-gray-700" },
+          {
+            label: "Awaiting",
+            key: "SENT",
+            count: (statusCounts.PENDING || 0) + (statusCounts.SENT || 0),
+            color: "bg-blue-50 text-blue-700",
+          },
+          { label: "Accepted", key: "ACCEPTED", count: statusCounts.ACCEPTED || 0, color: "bg-emerald-50 text-emerald-700" },
+          {
+            label: "Closed",
+            key: "CLOSED",
+            count: (statusCounts.REJECTED || 0) + (statusCounts.EXPIRED || 0) + (statusCounts.CANCELLED || 0),
+            color: "bg-gray-50 text-gray-500",
+          },
         ].map((s) => (
           <button
-            key={s.label}
-            onClick={() => setFilterStatus(s.label === "Total" ? "ALL" : s.label)}
+            key={s.key}
+            onClick={() => setFilterStatus(s.key)}
             className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
-              filterStatus === (s.label === "Total" ? "ALL" : s.label)
+              filterStatus === s.key
                 ? "border-blue-500 ring-2 ring-blue-500/20"
                 : "border-gray-200 hover:border-gray-300"
             } ${s.color}`}
@@ -208,7 +337,9 @@ export default function BuyerQuotations() {
           <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
           <p className="font-medium text-gray-600">No quotations found</p>
           <p className="text-sm text-gray-400 mt-1">
-            Quotations from sellers will appear here
+            {enquiryFilter != null
+              ? `The seller has not quoted on Enquiry #${enquiryFilter} yet`
+              : "Quotations from sellers will appear here"}
           </p>
         </div>
       ) : compareMode && comparedQuotations.length >= 2 ? (
@@ -233,10 +364,34 @@ export default function BuyerQuotations() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 <tr>
-                  <td className="px-4 py-3 text-sm font-medium text-gray-700">Amount</td>
+                  <td className="px-4 py-3 text-sm font-medium text-gray-700">Quantity</td>
                   {comparedQuotations.map((q) => (
-                    <td key={q.id} className="px-4 py-3 text-center text-sm font-bold text-gray-900">
-                      ₹{q.amount?.toLocaleString() || "—"}
+                    <td key={q.id} className="px-4 py-3 text-center text-sm font-medium text-gray-700">
+                      {q.quantity_label || `${q.quantity} units`}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 text-sm font-medium text-gray-700">Unit Price</td>
+                  {comparedQuotations.map((q) => (
+                    <td key={q.id} className="px-4 py-3 text-center text-sm text-gray-700">
+                      {q.unit_price ? rupees(q.unit_price) : "Lump sum"}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 text-sm font-medium text-gray-700">Total</td>
+                  {comparedQuotations.map((q) => (
+                    <td key={q.id} className="px-4 py-3 text-center text-sm font-extrabold text-gray-900">
+                      {rupees(q.amount)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 text-sm font-medium text-gray-700">Delivery</td>
+                  {comparedQuotations.map((q) => (
+                    <td key={q.id} className="px-4 py-3 text-center text-sm text-gray-700">
+                      {q.delivery_display || "—"}
                     </td>
                   ))}
                 </tr>
@@ -306,11 +461,17 @@ export default function BuyerQuotations() {
           {filtered.map((q) => (
             <div
               key={q.id}
-              className="bg-white border border-gray-200 rounded-2xl p-5 hover:shadow-md transition-all"
+              className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-all ${
+                q.status === "ACCEPTED"
+                  ? "border-emerald-200"
+                  : q.status === "REJECTED" || q.status === "EXPIRED"
+                    ? "border-gray-200 opacity-80"
+                    : "border-gray-200"
+              }`}
             >
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 mb-2">
+                  <div className="flex flex-wrap items-center gap-3 mb-2">
                     <input
                       type="checkbox"
                       checked={selectedForCompare.includes(q.id)}
@@ -321,51 +482,56 @@ export default function BuyerQuotations() {
                       Quotation #{q.id}
                     </span>
                     <StatusBadge status={q.status} />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                    <div className="flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-emerald-500" />
-                      <div>
-                        <p className="text-xs text-gray-500">Amount</p>
-                        <p className="text-sm font-bold text-gray-900">
-                          ₹{q.amount?.toLocaleString() || "—"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-blue-500" />
-                      <div>
-                        <p className="text-xs text-gray-500">Received</p>
-                        <p className="text-sm font-medium text-gray-700">
-                          {q.created_at
-                            ? new Date(q.created_at).toLocaleDateString()
-                            : "—"}
-                        </p>
-                      </div>
-                    </div>
-                    {q.valid_until && (
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-amber-500" />
-                        <div>
-                          <p className="text-xs text-gray-500">Valid Until</p>
-                          <p className="text-sm font-medium text-gray-700">
-                            {new Date(q.valid_until).toLocaleDateString()}
-                          </p>
-                        </div>
-                      </div>
+                    {q.is_expired && q.status !== "EXPIRED" && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px] font-bold">
+                        <AlertCircle className="w-3 h-3" /> Validity passed
+                      </span>
                     )}
                   </div>
+
+                  {q.business_name && (
+                    <p className="text-sm font-semibold text-gray-800 mb-3">
+                      {q.business_name}
+                    </p>
+                  )}
+                  <QuotationSubject q={q} />
+
+                  <QuotationBreakdown q={q} />
+
+                  <QuotationTerms q={q} />
 
                   {q.description && (
                     <p className="text-sm text-gray-600 mt-3 bg-gray-50 rounded-lg p-3">
                       {q.description}
                     </p>
                   )}
+                  {q.terms && (
+                    <p className="text-xs text-gray-500 mt-2 bg-gray-50/60 border-l-2 border-gray-200 rounded-r-lg p-2 pl-3">
+                      <span className="font-bold text-gray-600">Terms: </span>
+                      {q.terms}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-gray-500">
+                    <span className="inline-flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                      Received{" "}
+                      {q.created_at
+                        ? new Date(q.created_at).toLocaleDateString()
+                        : "—"}
+                    </span>
+                    {q.valid_until && (
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-gray-400" />
+                        Valid until{" "}
+                        {new Date(q.valid_until).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Actions */}
-                {q.status === "PENDING" || q.status === "SENT" ? (
+                {isDecidable(q) ? (
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => handleReject(q.id)}
@@ -391,6 +557,15 @@ export default function BuyerQuotations() {
                       )}
                       Accept
                     </button>
+                  </div>
+                ) : q.status === "EXPIRED" || q.is_expired ? (
+                  <div className="flex-shrink-0">
+                    <span className="px-4 py-2 bg-gray-50 border border-gray-200 text-gray-500 text-xs font-bold rounded-xl block text-center">
+                      Expired
+                      <span className="block font-normal text-[10px] mt-0.5">
+                        Ask the seller to re-quote
+                      </span>
+                    </span>
                   </div>
                 ) : (
                   <div className="flex-shrink-0">

@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.dependencies.auth import require_seller, require_buyer, require_buyer_or_admin
+from app.dependencies.auth import require_seller, require_buyer, require_buyer_or_seller_or_admin
 from app.dependencies.database import get_db_session
 from app.models.service_listing import ServiceListing, ListingApprovalStatus
 from app.models.biz_profile import BizProfile
@@ -218,7 +218,7 @@ def seller_delete_service(
 @router.get("/buyer/list")
 def buyer_list_services(
     db: Session = Depends(get_db_session),
-    current_user: User = Depends(require_buyer_or_admin),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
 ):
     services = db.execute(
         select(ServiceListing)
@@ -233,7 +233,7 @@ def buyer_list_services(
 def buyer_create_service(
     req: ServiceCreateRequest,
     db: Session = Depends(get_db_session),
-    current_user: User = Depends(require_buyer_or_admin),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
 ):
     if req.profile_id:
         profile = db.get(BizProfile, req.profile_id)
@@ -248,7 +248,7 @@ def buyer_update_service(
     svc_id: int,
     req: ServiceUpdateRequest,
     db: Session = Depends(get_db_session),
-    current_user: User = Depends(require_buyer_or_admin),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
 ):
     svc = db.get(ServiceListing, svc_id)
     if not svc:
@@ -274,7 +274,7 @@ def buyer_update_service(
 def buyer_delete_service(
     svc_id: int,
     db: Session = Depends(get_db_session),
-    current_user: User = Depends(require_buyer_or_admin),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
 ):
     svc = db.get(ServiceListing, svc_id)
     if not svc:

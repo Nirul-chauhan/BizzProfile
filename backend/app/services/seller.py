@@ -1,6 +1,7 @@
 """Seller service layer — all business logic for the seller backend."""
 import re
 import uuid
+from datetime import datetime, timezone, timedelta
 from math import radians, sin, cos, sqrt, atan2
 from typing import Any
 
@@ -8,15 +9,18 @@ from sqlalchemy import func, select, and_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.biz_profile import BizProfile
-from app.models.product import Product, ProductImage
-from app.models.service import BizService
+from app.models.product import Product, ProductImage, ProductStatus, ProductApprovalStatus
+from app.models.service import BizService, ServiceStatus, ServiceApprovalStatus
+from app.models.trending_video import TrendingVideo, VideoApprovalStatus
 from app.models.business_hours import BusinessHour
-from app.models.enquiry import Enquiry
-from app.models.quotation import Quotation
+from app.models.enquiry import Enquiry, EnquiryStatus
+from app.models.quotation import Quotation, QuotationStatus
 from app.models.requirement import Requirement
 from app.models.message import Message
 from app.models.category import Category, Subcategory
 from app.models.user import User
+from app.models.notification import NotificationType
+from app.services.notifications import create_notification
 
 
 class SellerError(Exception):
@@ -30,6 +34,27 @@ class SellerService:
     # -----------------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------------
+
+    def _unique_slug(self, model: Any, base_slug: str, exclude_id: int | None = None) -> str:
+        """Return `base_slug`, suffixed until it is free for `model`.
+
+        `slug` carries a unique constraint, so a seller who renames a listing to
+        a name another seller already uses must not blow up on commit.
+        """
+        candidate = base_slug
+        while (
+            self.db.execute(
+                select(model.id).where(
+                    model.slug == candidate,
+                    model.id != exclude_id if exclude_id is not None else model.id.isnot(None),
+                )
+            )
+            .scalars()
+            .first()
+            is not None
+        ):
+            candidate = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+        return candidate
 
     def _get_profile_for_user(self, user_id: int) -> BizProfile:
         """Get the first active biz profile for a seller user, or raise."""
@@ -47,6 +72,20 @@ class SellerService:
             raise SellerError("You do not have a business profile yet. Create one first.")
         return profile
 
+    def _get_owned_profile_ids(self, user_id: int) -> list[int]:
+        """Every active business profile id owned by this seller.
+
+        Ownership is enforced on user_id, so all of a seller's own profiles are
+        in scope and nothing belonging to another seller ever is.
+        """
+        rows = self.db.execute(
+            select(BizProfile.id).where(
+                BizProfile.user_id == user_id,
+                BizProfile.is_active == True,  # noqa: E712
+            )
+        ).scalars().all()
+        return list(rows)
+
     def _get_profile_by_id(self, profile_id: int) -> BizProfile:
         profile = self.db.get(BizProfile, profile_id)
         if profile is None:
@@ -56,6 +95,12 @@ class SellerService:
     def _ensure_ownership(self, profile: BizProfile, user_id: int) -> None:
         if profile.user_id != user_id:
             raise SellerError("You do not own this resource.")
+
+    def _require_owned_profile(self, profile_id: int, user_id: int) -> BizProfile:
+        """Load a profile and assert the requesting seller owns it."""
+        profile = self._get_profile_by_id(profile_id)
+        self._ensure_ownership(profile, user_id)
+        return profile
 
     @staticmethod
     def _generate_slug(name: str) -> str:
@@ -72,6 +117,36 @@ class SellerService:
         from datetime import time as dt_time
         parts = time_str.split(":")
         return dt_time(int(parts[0]), int(parts[1]))
+
+    def _count(self, model: Any, *conditions: Any) -> int:
+        """Count rows in a table for the given conditions."""
+        return (
+            self.db.execute(select(func.count()).select_from(model).where(*conditions)).scalar()
+            or 0
+        )
+
+    @staticmethod
+    def _assert_editable(approval_status: str, label: str) -> None:
+        """Block seller edits once an admin has approved the listing."""
+        if approval_status == "APPROVED":
+            raise SellerError(
+                f"Cannot edit an approved {label}. Withdraw it from the marketplace first."
+            )
+
+    @staticmethod
+    def _resubmit(record: Any) -> None:
+        """Mark a seller-owned listing as awaiting admin review again."""
+        record.approval_status = "PENDING"
+        record.rejection_reason = None
+        record.submitted_at = datetime.now(timezone.utc)
+        if hasattr(record, "reviewed_at"):
+            record.reviewed_at = None
+        if hasattr(record, "reviewed_by_user_id"):
+            record.reviewed_by_user_id = None
+        if hasattr(record, "status"):
+            record.status = "DRAFT"
+        if hasattr(record, "is_published"):
+            record.is_published = False
 
     # -----------------------------------------------------------------------
     # Dashboard
@@ -91,71 +166,139 @@ class SellerService:
         )
 
     def get_dashboard_stats(self, user_id: int) -> dict:
+        """Live PostgreSQL counters for the seller's own records.
+
+        Every number below is a real COUNT(*) scoped to the profiles this seller
+        owns (plus rows attributed directly to them via added_by_user_id).
+        """
+        empty = {
+            "total_products": 0,
+            "active_products": 0,
+            "best_seller_products": 0,
+            "total_services": 0,
+            "active_services": 0,
+            "pending_approval_products": 0,
+            "pending_approval_services": 0,
+            "total_enquiries": 0,
+            "pending_enquiries": 0,
+            "new_enquiries": 0,
+            "total_quotations": 0,
+            "pending_quotations": 0,
+            "accepted_quotations": 0,
+            "promotional_videos": 0,
+            "approved_promotional_videos": 0,
+            "profile_completion": 0,
+            "verification_status": "PENDING",
+        }
+
         profile = self._get_profile_for_user_optional(user_id)
-
         if profile is None:
-            return {
-                "total_products": 0,
-                "active_products": 0,
-                "total_services": 0,
-                "active_services": 0,
-                "new_enquiries": 0,
-                "pending_quotations": 0,
-                "accepted_quotations": 0,
-                "profile_completion": 0,
-                "verification_status": "PENDING",
-            }
+            return empty
 
-        total_products = self.db.execute(
-            select(func.count()).select_from(Product).where(Product.profile_id == profile.id)
-        ).scalar() or 0
+        profile_ids = self._get_owned_profile_ids(user_id)
+        # Nothing is owned yet — no listings, enquiries or media to report.
+        if not profile_ids:
+            return {**empty, "profile_completion": self._profile_completion(profile)}
 
-        active_products = self.db.execute(
-            select(func.count()).select_from(Product).where(
-                Product.profile_id == profile.id,
-                Product.status == "ACTIVE",
-            )
-        ).scalar() or 0
+        # ---- Products -----------------------------------------------------
+        total_products = self._count(Product, Product.profile_id.in_(profile_ids))
+        active_products = self._count(
+            Product,
+            Product.profile_id.in_(profile_ids),
+            Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
+        )
+        best_seller_products = self._count(
+            Product,
+            Product.profile_id.in_(profile_ids),
+            Product.is_best_seller == True,  # noqa: E712
+        )
+        pending_approval_products = self._count(
+            Product,
+            Product.profile_id.in_(profile_ids),
+            Product.approval_status == ProductApprovalStatus.PENDING.value,
+        )
 
-        total_services = self.db.execute(
-            select(func.count()).select_from(BizService).where(BizService.profile_id == profile.id)
-        ).scalar() or 0
+        # ---- Services -----------------------------------------------------
+        total_services = self._count(BizService, BizService.profile_id.in_(profile_ids))
+        active_services = self._count(
+            BizService,
+            BizService.profile_id.in_(profile_ids),
+            BizService.status == ServiceStatus.ACTIVE.value,
+            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
+        )
+        pending_approval_services = self._count(
+            BizService,
+            BizService.profile_id.in_(profile_ids),
+            BizService.approval_status == ServiceApprovalStatus.PENDING.value,
+        )
 
-        active_services = self.db.execute(
-            select(func.count()).select_from(BizService).where(
-                BizService.profile_id == profile.id,
-                BizService.status == "ACTIVE",
-            )
-        ).scalar() or 0
+        # ---- Enquiries ----------------------------------------------------
+        total_enquiries = self._count(Enquiry, Enquiry.profile_id.in_(profile_ids))
+        pending_enquiries = self._count(
+            Enquiry,
+            Enquiry.profile_id.in_(profile_ids),
+            Enquiry.status.in_(
+                [
+                    EnquiryStatus.NEW.value,
+                    EnquiryStatus.CONTACTED.value,
+                    EnquiryStatus.QUOTED.value,
+                ]
+            ),
+        )
+        new_enquiries = self._count(
+            Enquiry,
+            Enquiry.profile_id.in_(profile_ids),
+            Enquiry.status == EnquiryStatus.NEW.value,
+        )
 
-        new_enquiries = self.db.execute(
-            select(func.count()).select_from(Enquiry).where(
-                Enquiry.profile_id == profile.id,
-                Enquiry.status == "NEW",
-            )
-        ).scalar() or 0
+        # ---- Quotations ---------------------------------------------------
+        # Quotations are attributed to the seller by seller_id, so they are
+        # counted directly rather than through the enquiry join.
+        total_quotations = self._count(Quotation, Quotation.seller_id == user_id)
+        pending_quotations = self._count(
+            Quotation,
+            Quotation.seller_id == user_id,
+            Quotation.status.in_([QuotationStatus.PENDING.value, QuotationStatus.SENT.value]),
+        )
+        accepted_quotations = self._count(
+            Quotation,
+            Quotation.seller_id == user_id,
+            Quotation.status == QuotationStatus.ACCEPTED.value,
+        )
 
-        pending_quotations = self.db.execute(
-            select(func.count()).select_from(Quotation)
-            .join(Enquiry, Quotation.enquiry_id == Enquiry.id)
-            .where(
-                Enquiry.profile_id == profile.id,
-                Quotation.seller_id == user_id,
-                Quotation.status.in_(["PENDING", "SENT"]),
-            )
-        ).scalar() or 0
+        # ---- Promotional videos -------------------------------------------
+        promotional_videos = self._count(TrendingVideo, TrendingVideo.added_by_user_id == user_id)
+        approved_promotional_videos = self._count(
+            TrendingVideo,
+            TrendingVideo.added_by_user_id == user_id,
+            TrendingVideo.approval_status == VideoApprovalStatus.APPROVED.value,
+        )
 
-        accepted_quotations = self.db.execute(
-            select(func.count()).select_from(Quotation)
-            .join(Enquiry, Quotation.enquiry_id == Enquiry.id)
-            .where(
-                Enquiry.profile_id == profile.id,
-                Quotation.seller_id == user_id,
-                Quotation.status == "ACCEPTED",
-            )
-        ).scalar() or 0
+        return {
+            "total_products": total_products,
+            "active_products": active_products,
+            "best_seller_products": best_seller_products,
+            "total_services": total_services,
+            "active_services": active_services,
+            "pending_approval_products": pending_approval_products,
+            "pending_approval_services": pending_approval_services,
+            "total_enquiries": total_enquiries,
+            "pending_enquiries": pending_enquiries,
+            "new_enquiries": new_enquiries,
+            "total_quotations": total_quotations,
+            "pending_quotations": pending_quotations,
+            "accepted_quotations": accepted_quotations,
+            "promotional_videos": promotional_videos,
+            "approved_promotional_videos": approved_promotional_videos,
+            "profile_completion": self._profile_completion(profile),
+            "verification_status": (
+                "APPROVED" if profile.is_verified else "PENDING"
+            ),
+        }
 
-        # Profile completion score (0-100)
+    def _profile_completion(self, profile: BizProfile) -> int:
+        """Percentage (0-100) of the recommended profile fields that are filled."""
         filled = 0
         total_fields = 10
         if profile.business_name:
@@ -176,28 +319,13 @@ class SellerService:
             filled += 1
         if profile.latitude is not None and profile.longitude is not None:
             filled += 1
-        # Check if at least one business hour exists
-        bh_count = self.db.execute(
-            select(func.count()).select_from(BusinessHour).where(
-                BusinessHour.biz_profile_id == profile.id
-            )
-        ).scalar() or 0
+        bh_count = self._count(
+            BusinessHour, BusinessHour.biz_profile_id == profile.id
+        )
         if bh_count > 0:
             filled += 1
 
-        profile_completion = int((filled / total_fields) * 100)
-
-        return {
-            "total_products": total_products,
-            "active_products": active_products,
-            "total_services": total_services,
-            "active_services": active_services,
-            "new_enquiries": new_enquiries,
-            "pending_quotations": pending_quotations,
-            "accepted_quotations": accepted_quotations,
-            "profile_completion": profile_completion,
-            "verification_status": "APPROVED" if profile.is_verified else "PENDING",
-        }
+        return int((filled / total_fields) * 100)
 
     # -----------------------------------------------------------------------
     # Business Profile
@@ -311,18 +439,29 @@ class SellerService:
     # Products
     # -----------------------------------------------------------------------
 
-    def list_products(self, user_id: int, page: int = 1, page_size: int = 20) -> dict:
-        profile = self._get_profile_for_user(user_id)
+    def list_products(
+        self,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        approval_status: str | None = None,
+        search: str | None = None,
+    ) -> dict:
+        profile_ids = self._get_owned_profile_ids(user_id)
         offset = (page - 1) * page_size
 
-        total = self.db.execute(
-            select(func.count()).select_from(Product).where(Product.profile_id == profile.id)
-        ).scalar() or 0
+        conditions = [Product.profile_id.in_(profile_ids)]
+        if approval_status:
+            conditions.append(Product.approval_status == approval_status)
+        if search:
+            conditions.append(Product.name.ilike(f"%{search}%"))
+
+        total = self._count(Product, *conditions)
 
         products = (
             self.db.execute(
                 select(Product)
-                .where(Product.profile_id == profile.id)
+                .where(and_(*conditions))
                 .options(joinedload(Product.images))
                 .order_by(Product.created_at.desc())
                 .offset(offset)
@@ -345,8 +484,7 @@ class SellerService:
         product = self.db.get(Product, product_id)
         if product is None:
             raise SellerError("Product not found.")
-        profile = self._get_profile_by_id(product.profile_id)
-        self._ensure_ownership(profile, user_id)
+        self._require_owned_profile(product.profile_id, user_id)
         return product
 
     def create_product(self, user_id: int, data: dict) -> Product:
@@ -357,27 +495,32 @@ class SellerService:
         if category is None:
             raise SellerError("Category not found.")
 
-        # Generate slug
-        slug = self._generate_slug(data["name"])
-        existing_slug = (
-            self.db.execute(select(Product).where(Product.slug == slug))
-            .scalars()
-            .first()
-        )
-        if existing_slug:
-            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
+        subcategory_id = data.get("subcategory_id")
+        if subcategory_id:
+            sub = self.db.get(Subcategory, subcategory_id)
+            if sub is None or sub.category_id != category.id:
+                raise SellerError("Subcategory not found or does not belong to the category.")
 
+        # Generate slug
+        slug = self._unique_slug(Product, self._generate_slug(data["name"]))
+
+        # New listings always start as an unpublished draft awaiting admin
+        # approval. Merchandising flags are admin decisions, never seller input.
         product = Product(
             profile_id=profile.id,
             category_id=data["category_id"],
-            subcategory_id=data.get("subcategory_id"),
+            subcategory_id=subcategory_id,
             name=data["name"],
             slug=slug,
             description=data.get("description"),
             price=data.get("price"),
             price_unit=data.get("price_unit"),
             is_available=data.get("is_available", True),
-            status=data.get("status", "ACTIVE"),
+            added_by_user_id=user_id,
+            approval_status=ProductApprovalStatus.PENDING.value,
+            status=ProductStatus.DRAFT.value,
+            is_best_seller=False,
+            is_trending=False,
         )
         self.db.add(product)
         self.db.commit()
@@ -386,6 +529,7 @@ class SellerService:
 
     def update_product(self, user_id: int, product_id: int, data: dict) -> Product:
         product = self.get_product(user_id, product_id)
+        self._assert_editable(product.approval_status, "product")
 
         if "category_id" in data and data["category_id"] is not None:
             category = self.db.get(Category, data["category_id"])
@@ -406,10 +550,26 @@ class SellerService:
             if existing_slug:
                 raise SellerError("Slug already in use.")
 
+        if "name" in data and data["name"]:
+            product.slug = self._unique_slug(
+                Product, self._generate_slug(data["name"]), exclude_id=product.id
+            )
+
         for key, value in data.items():
             if value is not None:
                 setattr(product, key, value)
 
+        # Any seller edit re-opens review so the admin sees the new content.
+        self._resubmit(product)
+
+        self.db.commit()
+        self.db.refresh(product)
+        return product
+
+    def submit_product(self, user_id: int, product_id: int) -> Product:
+        """Send a draft/rejected product to the admin for approval."""
+        product = self.get_product(user_id, product_id)
+        self._resubmit(product)
         self.db.commit()
         self.db.refresh(product)
         return product
@@ -480,18 +640,29 @@ class SellerService:
     # Services
     # -----------------------------------------------------------------------
 
-    def list_services(self, user_id: int, page: int = 1, page_size: int = 20) -> dict:
-        profile = self._get_profile_for_user(user_id)
+    def list_services(
+        self,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        approval_status: str | None = None,
+        search: str | None = None,
+    ) -> dict:
+        profile_ids = self._get_owned_profile_ids(user_id)
         offset = (page - 1) * page_size
 
-        total = self.db.execute(
-            select(func.count()).select_from(BizService).where(BizService.profile_id == profile.id)
-        ).scalar() or 0
+        conditions = [BizService.profile_id.in_(profile_ids)]
+        if approval_status:
+            conditions.append(BizService.approval_status == approval_status)
+        if search:
+            conditions.append(BizService.name.ilike(f"%{search}%"))
+
+        total = self._count(BizService, *conditions)
 
         services = (
             self.db.execute(
                 select(BizService)
-                .where(BizService.profile_id == profile.id)
+                .where(and_(*conditions))
                 .order_by(BizService.created_at.desc())
                 .offset(offset)
                 .limit(page_size)
@@ -512,8 +683,7 @@ class SellerService:
         svc = self.db.get(BizService, service_id)
         if svc is None:
             raise SellerError("Service not found.")
-        profile = self._get_profile_by_id(svc.profile_id)
-        self._ensure_ownership(profile, user_id)
+        self._require_owned_profile(svc.profile_id, user_id)
         return svc
 
     def create_service(self, user_id: int, data: dict) -> BizService:
@@ -523,20 +693,34 @@ class SellerService:
         if category is None:
             raise SellerError("Category not found.")
 
+        subcategory_id = data.get("subcategory_id")
+        if subcategory_id:
+            sub = self.db.get(Subcategory, subcategory_id)
+            if sub is None or sub.category_id != category.id:
+                raise SellerError("Subcategory not found or does not belong to the category.")
+
         price = data.get("price")
+        slug = self._unique_slug(BizService, self._generate_slug(data["name"]))
+
+        # Unpublished draft pending admin approval. is_trending / is_featured
+        # are merchandising decisions reserved for admins.
         svc = BizService(
             profile_id=profile.id,
             category_id=data["category_id"],
-            subcategory_id=data.get("subcategory_id"),
+            subcategory_id=subcategory_id,
             name=data["name"],
+            slug=slug,
             description=data.get("description"),
             price_min=data.get("price_min") or price,
             price_max=data.get("price_max"),
             price_unit=data.get("price_unit"),
             is_available=data.get("is_available", True),
-            is_trending=data.get("is_trending", False),
-            is_featured=data.get("is_featured", False),
-            status=data.get("status", "ACTIVE"),
+            is_trending=False,
+            is_featured=False,
+            is_published=False,
+            added_by_user_id=user_id,
+            approval_status=ServiceApprovalStatus.PENDING.value,
+            status=ServiceStatus.DRAFT.value,
         )
         self.db.add(svc)
         self.db.commit()
@@ -545,16 +729,33 @@ class SellerService:
 
     def update_service(self, user_id: int, service_id: int, data: dict) -> BizService:
         svc = self.get_service(user_id, service_id)
+        self._assert_editable(svc.approval_status, "service")
 
         if "category_id" in data and data["category_id"] is not None:
             category = self.db.get(Category, data["category_id"])
             if category is None:
                 raise SellerError("Category not found.")
 
+        if "name" in data and data["name"]:
+            svc.slug = self._unique_slug(
+                BizService, self._generate_slug(data["name"]), exclude_id=svc.id
+            )
+
         for key, value in data.items():
             if value is not None:
                 setattr(svc, key, value)
 
+        # Any seller edit re-opens review so the admin sees the new content.
+        self._resubmit(svc)
+
+        self.db.commit()
+        self.db.refresh(svc)
+        return svc
+
+    def submit_service(self, user_id: int, service_id: int) -> BizService:
+        """Send a draft/rejected service to the admin for approval."""
+        svc = self.get_service(user_id, service_id)
+        self._resubmit(svc)
         self.db.commit()
         self.db.refresh(svc)
         return svc
@@ -625,25 +826,31 @@ class SellerService:
     # -----------------------------------------------------------------------
 
     def list_enquiries(self, user_id: int, page: int = 1, page_size: int = 20, status: str | None = None) -> dict:
-        profile = self._get_profile_for_user(user_id)
+        profile_ids = self._get_owned_profile_ids(user_id)
         offset = (page - 1) * page_size
 
-        conditions = [Enquiry.profile_id == profile.id]
+        conditions = [Enquiry.profile_id.in_(profile_ids)]
         if status:
             conditions.append(Enquiry.status == status)
 
-        total = self.db.execute(
-            select(func.count()).select_from(Enquiry).where(and_(*conditions))
-        ).scalar() or 0
+        total = self._count(Enquiry, *conditions)
 
         enquiries = (
             self.db.execute(
                 select(Enquiry)
                 .where(and_(*conditions))
+                .options(
+                    joinedload(Enquiry.buyer),
+                    joinedload(Enquiry.seller),
+                    joinedload(Enquiry.biz_profile),
+                    joinedload(Enquiry.product),
+                    joinedload(Enquiry.service),
+                )
                 .order_by(Enquiry.created_at.desc())
                 .offset(offset)
                 .limit(page_size)
             )
+            .unique()
             .scalars()
             .all()
         )
@@ -660,16 +867,17 @@ class SellerService:
         enquiry = self.db.get(Enquiry, enquiry_id)
         if enquiry is None:
             raise SellerError("Enquiry not found.")
-        profile = self._get_profile_by_id(enquiry.profile_id)
-        self._ensure_ownership(profile, user_id)
+        self._require_owned_profile(enquiry.profile_id, user_id)
         return enquiry
 
     def update_enquiry_status(self, user_id: int, enquiry_id: int, new_status: str) -> Enquiry:
         enquiry = self.get_enquiry(user_id, enquiry_id)
         allowed_transitions = {
-            "NEW": ["READ", "CLOSED"],
-            "READ": ["REPLIED", "CLOSED"],
-            "REPLIED": ["CLOSED"],
+            "NEW": ["CONTACTED", "CLOSED"],
+            "CONTACTED": ["QUOTED", "CLOSED"],
+            "QUOTED": ["CLOSED"],
+            "ACCEPTED": ["CLOSED"],
+            "REJECTED": ["CLOSED"],
             "CLOSED": [],
         }
         current = allowed_transitions.get(enquiry.status, [])
@@ -692,28 +900,93 @@ class SellerService:
         if enquiry is None:
             raise SellerError("Enquiry not found.")
 
-        profile = self._get_profile_by_id(enquiry.profile_id)
-        self._ensure_ownership(profile, user_id)
+        self._require_owned_profile(enquiry.profile_id, user_id)
 
-        # Get buyer_id from enquiry
+        quantity, unit_price, amount = self._resolve_pricing(data)
+
+        # Validity can be given as a window ("7 days") or as an absolute date.
+        # The stored valid_until is always the authoritative expiry.
+        valid_until = data.get("valid_until")
+        valid_days = data.get("valid_days")
+        if valid_until is None and valid_days is not None:
+            valid_until = datetime.now(timezone.utc) + timedelta(days=valid_days)
+
         quotation = Quotation(
             enquiry_id=enquiry.id,
             seller_id=user_id,
             buyer_id=enquiry.buyer_id,
-            amount=data["amount"],
+            amount=amount,
+            quantity=quantity,
+            unit_price=unit_price,
+            delivery_days=data.get("delivery_days"),
+            valid_days=valid_days,
             description=data.get("description"),
-            valid_until=data.get("valid_until"),
-            status="PENDING",
+            terms=data.get("terms"),
+            valid_until=valid_until,
+            # Creating a quotation is the act of sending it to the buyer, so it
+            # lands as SENT rather than waiting on a second manual step.
+            status=QuotationStatus.SENT.value,
         )
         self.db.add(quotation)
+        self.db.flush()
 
-        # Update enquiry status to REPLIED
-        if enquiry.status in ("NEW", "READ"):
-            enquiry.status = "REPLIED"
+        # Creating a quotation moves the enquiry into the QUOTED stage.
+        if enquiry.status in (
+            EnquiryStatus.NEW.value,
+            EnquiryStatus.CONTACTED.value,
+            EnquiryStatus.QUOTED.value,
+        ):
+            enquiry.status = EnquiryStatus.QUOTED.value
+
+        create_notification(
+            self.db,
+            user_id=enquiry.buyer_id,
+            type=NotificationType.QUOTATION_SENT.value,
+            title="New quotation received",
+            message=(
+                f"{enquiry.business_name or f'Business {user_id}'} sent you a quotation "
+                f"for {enquiry.product_name or enquiry.service_name or 'your enquiry'} "
+                f"totalling Rs. {amount:,.2f}."
+            ),
+            enquiry_id=enquiry.id,
+            quotation_id=quotation.id,
+        )
 
         self.db.commit()
         self.db.refresh(quotation)
         return quotation
+
+    @staticmethod
+    def _resolve_pricing(data: dict) -> tuple[int, float | None, float]:
+        """Work out (quantity, unit_price, total) from whatever the seller sent.
+
+        Per-unit pricing wins and derives the total; a bare amount is treated as
+        a lump-sum quote for a single unit. Schema validation has already
+        checked the two agree when both are supplied.
+        """
+        quantity = data.get("quantity")
+        unit_price = data.get("unit_price")
+        amount = data.get("amount")
+
+        if quantity is not None and unit_price is not None:
+            return quantity, unit_price, round(quantity * unit_price, 2)
+        if amount is not None:
+            return quantity or 1, unit_price, amount
+        raise SellerError("Provide quantity and unit price, or a total amount.")
+
+    def _expire_stale_quotations(self, quotations: list[Quotation]) -> None:
+        """Flip open quotations past their validity window to EXPIRED.
+
+        Runs on read paths so a quote nobody acted on stops looking actionable.
+        """
+        stale = [q for q in quotations if q.is_expired]
+        if not stale:
+            return
+        for quote in stale:
+            quote.status = QuotationStatus.EXPIRED.value
+        self.db.commit()
+        for quote in stale:
+            self.db.refresh(quote)
 
     def list_quotations(self, user_id: int, page: int = 1, page_size: int = 20, status: str | None = None) -> dict:
         profile = self._get_profile_for_user(user_id)
@@ -739,6 +1012,14 @@ class SellerService:
             .all()
         )
 
+        # Expiry is computed across the seller's whole book, not just this page,
+        # so the status filter stays consistent with the counts.
+        self._expire_stale_quotations(
+            self.db.execute(
+                select(Quotation).where(Quotation.seller_id == user_id)
+            ).scalars().all()
+        )
+
         return {
             "items": quotations,
             "total": total,
@@ -753,18 +1034,47 @@ class SellerService:
             raise SellerError("Quotation not found.")
         if quote.seller_id != user_id:
             raise SellerError("You do not own this quotation.")
+        self._expire_stale_quotations([quote])
         return quote
 
     def update_quotation(self, user_id: int, quotation_id: int, data: dict) -> Quotation:
         quote = self.get_quotation(user_id, quotation_id)
 
+        # A decided quotation is a historical record: the buyer already agreed
+        # to those exact numbers, so re-pricing it would silently change a
+        # binding deal. Cancelling a live quote is the only edit left.
+        if quote.status not in (QuotationStatus.PENDING.value, QuotationStatus.SENT.value):
+            raise SellerError(
+                f"Cannot revise a quotation in {quote.status} status. "
+                "Only open quotations can be changed."
+            )
+
         # Status transitions
         if "status" in data and data["status"] is not None:
             allowed = {"CANCELLED"}
-            if quote.status not in ("PENDING", "SENT"):
-                raise SellerError(f"Cannot cancel quotation in {quote.status} status.")
             if data["status"] not in allowed:
                 raise SellerError("Seller can only cancel a quotation.")
+
+        # Re-pricing keeps the line item and the total consistent.
+        quantity = data.get("quantity", quote.quantity)
+        unit_price = data.get("unit_price", quote.unit_price)
+        if "amount" in data and data["amount"] is not None:
+            if "unit_price" not in data and "quantity" not in data and unit_price:
+                # Editing only the total means the per-unit price follows it.
+                unit_price = round(data["amount"] / max(quantity, 1), 2)
+        if "quantity" not in data and "unit_price" not in data and "amount" not in data:
+            data.pop("quantity", None)
+        else:
+            if unit_price is not None:
+                data["amount"] = round(quantity * unit_price, 2)
+            data["unit_price"] = unit_price
+            data["quantity"] = quantity
+
+        # Revising a window restarts the countdown from now.
+        if data.get("valid_days") is not None and "valid_until" not in data:
+            data["valid_until"] = datetime.now(timezone.utc) + timedelta(
+                days=data["valid_days"]
+            )
 
         for key, value in data.items():
             if value is not None:

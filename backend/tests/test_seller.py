@@ -50,6 +50,13 @@ from app.services.password import hash_password
 _seller_counter = 0
 _buyer_counter = 0
 _product_counter = 0
+_admin_counter = 0
+
+
+def _admin_email():
+    global _admin_counter
+    _admin_counter += 1
+    return f"admin{_admin_counter}@test.com"
 
 
 def _seller_email():
@@ -118,7 +125,7 @@ def client(db, set_env):
 # ---------------------------------------------------------------------------
 
 def _ensure_roles(db):
-    for name in ["ADMIN", "CUSTOMER", "ENDUSER", "USER"]:
+    for name in ["ADMIN", "BUYER", "SELLER", "USER"]:
         if not db.query(Role).filter(Role.name == name).first():
             db.add(Role(name=name, description=f"{name} role"))
     db.commit()
@@ -149,7 +156,7 @@ _TEST_PASSWORD = "TestPass123!"
 
 def _create_seller(db, email):
     _ensure_roles(db)
-    role = db.query(Role).filter(Role.name == "ENDUSER").first()
+    role = db.query(Role).filter(Role.name == "SELLER").first()
     user = User(
         role_id=role.id,
         full_name=f"Seller {email.split('@')[0]}",
@@ -166,7 +173,7 @@ def _create_seller(db, email):
 
 def _create_buyer(db, email):
     _ensure_roles(db)
-    role = db.query(Role).filter(Role.name == "CUSTOMER").first()
+    role = db.query(Role).filter(Role.name == "BUYER").first()
     user = User(
         role_id=role.id,
         full_name=f"Buyer {email.split('@')[0]}",
@@ -181,7 +188,7 @@ def _create_buyer(db, email):
     return user
 
 
-def _register_and_login(client, email, role="ENDUSER", password=_TEST_PASSWORD):
+def _register_and_login(client, email, role="SELLER", password=_TEST_PASSWORD):
     # Register (ignore result — user may already exist from _create_seller/_create_buyer)
     client.post(
         "/api/auth/register",
@@ -201,6 +208,43 @@ def _register_and_login(client, email, role="ENDUSER", password=_TEST_PASSWORD):
 
 def _auth_header(token):
     return {"Authorization": f"Bearer {token}"}
+
+
+def _create_admin(db):
+    _ensure_roles(db)
+    role = db.query(Role).filter(Role.name == "ADMIN").first()
+    email = _admin_email()
+    user = User(
+        role_id=role.id,
+        full_name=f"Admin {email.split('@')[0]}",
+        email=email,
+        password_hash=hash_password(_TEST_PASSWORD),
+        is_email_verified=True,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _approve_product(client, db, product_id):
+    """New seller listings start as DRAFT and must be approved by an admin
+    before buyers can enquire about them."""
+    admin = _create_admin(db)
+    token = _register_and_login(client, admin.email, role="ADMIN")
+    return client.patch(
+        f"/api/admin/products/{product_id}/approve", headers=_auth_header(token)
+    )
+
+
+def _approve_service(client, db, service_id):
+    """Services follow the same draft-then-approval flow as products."""
+    admin = _create_admin(db)
+    token = _register_and_login(client, admin.email, role="ADMIN")
+    return client.patch(
+        f"/api/admin/services/{service_id}/approve", headers=_auth_header(token)
+    )
 
 
 def _create_profile(client, token, category_id, **overrides):
@@ -262,20 +306,22 @@ class TestSellerDashboard:
         profile_resp = client.get("/api/seller/profile", headers=_auth_header(token))
         profile_id = profile_resp.json()["id"]
 
-        # Create products
+        # Create and approve products
         for i in range(3):
-            client.post(
+            create = client.post(
                 "/api/seller/products",
                 json={"name": f"Product {i}", "category_id": cat.id, "status": "ACTIVE"},
                 headers=_auth_header(token),
             )
+            _approve_product(client, db, create.json()["id"])
 
-        # Create services
-        client.post(
+        # Create and approve services
+        svc = client.post(
             "/api/seller/services",
             json={"name": "Service 1", "category_id": cat.id, "status": "ACTIVE"},
             headers=_auth_header(token),
         )
+        _approve_service(client, db, svc.json()["id"])
 
         resp = client.get("/api/seller/dashboard", headers=_auth_header(token))
         assert resp.status_code == 200
@@ -289,7 +335,7 @@ class TestSellerDashboard:
     def test_buyer_cannot_access_seller_dashboard(self, client, db):
         email = _buyer_email()
         _create_buyer(db, email)
-        token = _register_and_login(client, email, role="CUSTOMER")
+        token = _register_and_login(client, email, role="BUYER")
 
         resp = client.get("/api/seller/dashboard", headers=_auth_header(token))
         assert resp.status_code == 403
@@ -553,7 +599,9 @@ class TestSellerProducts:
         data = resp.json()
         assert data["name"] == "Gaming Laptop"
         assert data["price"] == 99999.99
-        assert data["status"] == "ACTIVE"
+        # New listings always start as DRAFT and require admin approval;
+        # seller-supplied status is ignored by design.
+        assert data["status"] == "DRAFT"
         assert data["is_available"] is True
 
     def test_list_products(self, client, db):
@@ -711,12 +759,15 @@ class TestSellerProducts:
 
         _create_profile(client, token, cat.id)
 
+        # Seller-supplied status is ignored entirely: new listings are always
+        # created as DRAFT and only an admin can move them to ACTIVE.
         resp = client.post(
             "/api/seller/products",
             json={"name": "Bad Status", "category_id": cat.id, "status": "INVALID"},
             headers=_auth_header(token),
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 201
+        assert resp.json()["status"] == "DRAFT"
 
     def test_product_without_profile(self, client, db):
         email = _seller_email()
@@ -1061,7 +1112,7 @@ class TestSellerEnquiries:
         seller = _create_seller(db, seller_email)
         buyer = _create_buyer(db, buyer_email)
         seller_token = _register_and_login(client, seller_email)
-        buyer_token = _register_and_login(client, buyer_email, role="CUSTOMER")
+        buyer_token = _register_and_login(client, buyer_email, role="BUYER")
 
         cat = _ensure_category(db, "EnqCat", "enqcat")
         _create_profile(client, seller_token, cat.id)
@@ -1079,6 +1130,7 @@ class TestSellerEnquiries:
         # Buyer creates enquiry (via direct DB insert since there's no buyer enquiry API yet)
         enquiry = Enquiry(
             buyer_id=buyer.id,
+            seller_id=seller.id,
             profile_id=profile_id,
             product_id=product_id,
             message="I'm interested in this product",
@@ -1110,19 +1162,19 @@ class TestSellerEnquiries:
 
         resp = client.put(
             f"/api/seller/enquiries/{enquiry.id}/status",
-            json={"status": "READ"},
+            json={"status": "CONTACTED"},
             headers=_auth_header(seller_token),
         )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "READ"
+        assert resp.json()["status"] == "CONTACTED"
 
     def test_invalid_status_transition(self, client, db):
         seller_token, buyer_token, enquiry = self._setup_enquiry(client, db)
 
-        # NEW -> REPLIED directly should fail (must go through READ first)
+        # NEW -> QUOTED directly should fail (must go through CONTACTED first)
         resp = client.put(
             f"/api/seller/enquiries/{enquiry.id}/status",
-            json={"status": "REPLIED"},
+            json={"status": "QUOTED"},
             headers=_auth_header(seller_token),
         )
         assert resp.status_code == 400
@@ -1130,23 +1182,23 @@ class TestSellerEnquiries:
     def test_valid_status_chain(self, client, db):
         seller_token, buyer_token, enquiry = self._setup_enquiry(client, db)
 
-        # NEW -> READ
+        # NEW -> CONTACTED
         resp = client.put(
             f"/api/seller/enquiries/{enquiry.id}/status",
-            json={"status": "READ"},
+            json={"status": "CONTACTED"},
             headers=_auth_header(seller_token),
         )
         assert resp.status_code == 200
 
-        # READ -> REPLIED
+        # CONTACTED -> QUOTED
         resp = client.put(
             f"/api/seller/enquiries/{enquiry.id}/status",
-            json={"status": "REPLIED"},
+            json={"status": "QUOTED"},
             headers=_auth_header(seller_token),
         )
         assert resp.status_code == 200
 
-        # REPLIED -> CLOSED
+        # QUOTED -> CLOSED
         resp = client.put(
             f"/api/seller/enquiries/{enquiry.id}/status",
             json={"status": "CLOSED"},
@@ -1198,7 +1250,7 @@ class TestSellerQuotations:
         seller = _create_seller(db, seller_email)
         buyer = _create_buyer(db, buyer_email)
         seller_token = _register_and_login(client, seller_email)
-        buyer_token = _register_and_login(client, buyer_email, role="CUSTOMER")
+        buyer_token = _register_and_login(client, buyer_email, role="BUYER")
 
         cat = _ensure_category(db, "QuoteCat", "quotecat")
         _create_profile(client, seller_token, cat.id)
@@ -1208,6 +1260,7 @@ class TestSellerQuotations:
 
         enquiry = Enquiry(
             buyer_id=buyer.id,
+            seller_id=seller.id,
             profile_id=profile_id,
             message="Need a quote",
             status="NEW",
@@ -1234,7 +1287,8 @@ class TestSellerQuotations:
         assert resp.status_code == 201
         data = resp.json()
         assert data["amount"] == 5000
-        assert data["status"] == "PENDING"
+        # A new quotation goes straight out to the buyer as SENT.
+        assert data["status"] == "SENT"
 
     def test_create_quotation_updates_enquiry_status(self, client, db):
         seller_token, buyer_token, enquiry = self._setup_enquiry(client, db)
@@ -1245,9 +1299,9 @@ class TestSellerQuotations:
             headers=_auth_header(seller_token),
         )
 
-        # Check enquiry status updated to REPLIED
+        # Creating a quotation moves the enquiry to QUOTED
         resp = client.get(f"/api/seller/enquiries/{enquiry.id}", headers=_auth_header(seller_token))
-        assert resp.json()["status"] == "REPLIED"
+        assert resp.json()["status"] == "QUOTED"
 
     def test_list_quotations(self, client, db):
         seller_token, buyer_token, enquiry = self._setup_enquiry(client, db)
@@ -1355,7 +1409,7 @@ class TestSellerRequirements:
     def _setup_requirement(self, client, db, city="Delhi"):
         buyer_email = _buyer_email()
         buyer = _create_buyer(db, buyer_email)
-        buyer_token = _register_and_login(client, buyer_email, role="CUSTOMER")
+        buyer_token = _register_and_login(client, buyer_email, role="BUYER")
 
         seller_email = _seller_email()
         _create_seller(db, seller_email)
@@ -1437,7 +1491,7 @@ class TestSellerMessages:
         seller = _create_seller(db, seller_email)
         buyer = _create_buyer(db, buyer_email)
         seller_token = _register_and_login(client, seller_email)
-        buyer_token = _register_and_login(client, buyer_email, role="CUSTOMER")
+        buyer_token = _register_and_login(client, buyer_email, role="BUYER")
         return seller_token, buyer_token, seller, buyer
 
     def test_send_message(self, client, db):
@@ -1621,7 +1675,7 @@ class TestSellerOwnership:
     def test_buyer_cannot_access_seller_endpoints(self, client, db):
         email = _buyer_email()
         _create_buyer(db, email)
-        token = _register_and_login(client, email, role="CUSTOMER")
+        token = _register_and_login(client, email, role="BUYER")
 
         endpoints = [
             ("GET", "/api/seller/profile"),
@@ -1737,7 +1791,7 @@ class TestSellerDashboardAccuracy:
         seller = _create_seller(db, seller_email)
         buyer = _create_buyer(db, buyer_email)
         seller_token = _register_and_login(client, seller_email)
-        buyer_token = _register_and_login(client, buyer_email, role="CUSTOMER")
+        buyer_token = _register_and_login(client, buyer_email, role="BUYER")
 
         cat = _ensure_category(db, "DashCat", "dashcat")
         _create_profile(client, seller_token, cat.id)
@@ -1752,6 +1806,7 @@ class TestSellerDashboardAccuracy:
         # Create enquiry
         enquiry = Enquiry(
             buyer_id=buyer.id,
+            seller_id=seller.id,
             profile_id=profile_id,
             message="Test enquiry",
             status="NEW",
@@ -1769,7 +1824,7 @@ class TestSellerDashboardAccuracy:
         seller = _create_seller(db, seller_email)
         buyer = _create_buyer(db, buyer_email)
         seller_token = _register_and_login(client, seller_email)
-        buyer_token = _register_and_login(client, buyer_email, role="CUSTOMER")
+        buyer_token = _register_and_login(client, buyer_email, role="BUYER")
 
         cat = _ensure_category(db, "DashQuote", "dashquote")
         _create_profile(client, seller_token, cat.id)
@@ -1779,6 +1834,7 @@ class TestSellerDashboardAccuracy:
 
         enquiry = Enquiry(
             buyer_id=buyer.id,
+            seller_id=seller.id,
             profile_id=profile_id,
             message="Need quote",
             status="NEW",

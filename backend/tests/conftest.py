@@ -24,17 +24,23 @@ def set_env():
     original = {}
 
     def _set(**kwargs):
+        from app.config import get_settings
         for key, value in kwargs.items():
             original[key] = os.environ.get(key)
             os.environ[key] = str(value)
+        # get_settings() is lru_cached, so a value set earlier in the same
+        # test would otherwise be served from the cache.
+        get_settings.cache_clear()
 
     yield _set
 
+    from app.config import get_settings
     for key, value in original.items():
         if value is None:
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+    get_settings.cache_clear()
 
 
 @pytest.fixture

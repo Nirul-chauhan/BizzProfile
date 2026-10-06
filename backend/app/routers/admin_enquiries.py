@@ -31,7 +31,10 @@ class AdminEnquiryResponse(BaseModel):
     product_image: str | None = None
     service_id: int | None = None
     service_name: str | None = None
+    requirement: str | None = None
+    location: str | None = None
     message: str
+    quantity: int = 1
     status: str
     created_at: str | None
 
@@ -98,7 +101,10 @@ def list_enquiries(
                 product_image=primary,
                 service_id=e.service_id,
                 service_name=service.name if service else None,
+                requirement=e.requirement,
+                location=e.location,
                 message=e.message,
+                quantity=e.quantity,
                 status=e.status,
                 created_at=e.created_at.isoformat() if e.created_at else None,
             )

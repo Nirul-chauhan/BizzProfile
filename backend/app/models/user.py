@@ -60,7 +60,12 @@ User.reviews = relationship(
     "Review", back_populates="buyer", passive_deletes=True
 )
 User.enquiries = relationship(
-    "Enquiry", back_populates="buyer", passive_deletes=True
+    # Explicit FK required: Enquiry points at users.id twice (buyer_id and
+    # seller_id), so SQLAlchemy cannot infer which one this relationship means.
+    "Enquiry",
+    foreign_keys="Enquiry.buyer_id",
+    back_populates="buyer",
+    passive_deletes=True,
 )
 User.messages_sent = relationship(
     "Message", foreign_keys="Message.sender_id", back_populates="sender", passive_deletes=True

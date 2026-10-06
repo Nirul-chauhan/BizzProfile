@@ -11,6 +11,8 @@ import {
   Loader2,
   Building2,
   Tag,
+  GitBranch,
+  Flame,
 } from "lucide-react";
 import { searchAll } from "../api";
 
@@ -114,10 +116,56 @@ function ProductCard({ product }) {
   );
 }
 
-function ServiceCard({ service }) {
+const GROUP_META = {
+  products: { label: "Products", icon: Package, card: (i) => <ProductCard key={i.id} product={i} /> },
+  services: { label: "Services", icon: Briefcase, card: (i) => <ServiceCard key={i.id} service={i} /> },
+  businesses: { label: "Businesses", icon: Building2, card: (i) => <BusinessCard key={i.id} biz={i} /> },
+  categories: { label: "Categories", icon: Grid3X3, card: (i) => <CategoryCard key={i.id} category={i} /> },
+  subcategories: { label: "Subcategories", icon: GitBranch, card: (i) => <SubcategoryCard key={i.id} sub={i} /> },
+  best_sellers: { label: "Best Sellers", icon: Flame, card: (i) => <ProductCard key={i.id} product={i} /> },
+  nearby: { label: "Nearby Results", icon: MapPin, card: (i) => <BusinessCard key={i.id} biz={i} /> },
+};
+
+const GROUP_ORDER = [
+  "products",
+  "services",
+  "businesses",
+  "categories",
+  "subcategories",
+  "best_sellers",
+  "nearby",
+];
+
+function SubcategoryCard({ sub }) {
   return (
     <Link
-      to={`/services/detail/${service.slug}`}
+      to={`/categories/${sub.category_slug}/${sub.slug}`}
+      className="group bg-white rounded-2xl shadow-md shadow-gray-200/50 border border-gray-100 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 no-underline p-5 flex items-center gap-4"
+    >
+      <div className="w-14 h-14 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform duration-300">
+        <GitBranch className="w-6 h-6 text-white" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h3 className="text-sm font-extrabold text-gray-900 group-hover:text-amber-600 transition-colors line-clamp-1">
+          {sub.name}
+        </h3>
+        {sub.category_name && (
+          <p className="text-xs text-gray-500 line-clamp-1">in {sub.category_name}</p>
+        )}
+      </div>
+      <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-amber-600 transition-all flex-shrink-0" />
+    </Link>
+  );
+}
+
+function ServiceCard({ service }) {
+  const href =
+    service.source === "biz_service"
+      ? `/biz-services/${service.id}`
+      : `/services/detail/${service.slug}`;
+  return (
+    <Link
+      to={href}
       className="group bg-white rounded-2xl overflow-hidden shadow-md shadow-gray-200/50 border border-gray-100 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 no-underline"
     >
       <div className="h-32 bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center relative overflow-hidden">
@@ -225,18 +273,18 @@ export default function SearchResults() {
 
   const tabs = useMemo(() => {
     if (!data) return [];
-    return [
-      { id: "all", label: "All", count: (data.businesses?.total || 0) + (data.products?.total || 0) + (data.services?.total || 0) + (data.categories?.total || 0) },
-      { id: "businesses", label: "Businesses", count: data.businesses?.total || 0 },
-      { id: "products", label: "Products", count: data.products?.total || 0 },
-      { id: "services", label: "Services", count: data.services?.total || 0 },
-      { id: "categories", label: "Categories", count: data.categories?.total || 0 },
-    ].filter((t) => t.id === "all" || t.count > 0);
+    const perGroup = GROUP_ORDER.map((key) => ({
+      id: key,
+      label: GROUP_META[key].label,
+      count: data[key]?.total || 0,
+    })).filter((t) => t.count > 0);
+    const total = perGroup.reduce((sum, t) => sum + t.count, 0);
+    return [{ id: "all", label: "All", count: total }, ...perGroup];
   }, [data]);
 
   const shownItems =
-    data && ["businesses", "products", "services", "categories"]
-      .map((key) => ({ key, items: data[key]?.items || [] }))
+    data &&
+    GROUP_ORDER.map((key) => ({ key, items: data[key]?.items || [] }))
       .map(({ key, items }) => items.map((item) => ({ ...item, __type: key })));
 
   const activeItems =
@@ -244,11 +292,11 @@ export default function SearchResults() {
       ? (shownItems || []).flat()
       : (shownItems || []).find((g) => g[0]?.__type === activeTab) || [];
 
-  const totalCount =
-    (data?.businesses?.total || 0) +
-    (data?.products?.total || 0) +
-    (data?.services?.total || 0) +
-    (data?.categories?.total || 0);
+  const totalCount = useMemo(
+    () => (data ? GROUP_ORDER.reduce((s, k) => s + (data[k]?.total || 0), 0) : 0),
+    [data]
+  );
+
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -277,12 +325,12 @@ export default function SearchResults() {
           </h1>
           <p className="text-white/60 text-base max-w-xl mx-auto">
             {loading
-              ? "Searching businesses, products, services and categories..."
+              ? "Searching products, services, businesses, categories and more..."
               : data
                 ? `${totalCount} result${totalCount === 1 ? "" : "s"} found`
                 : q
                   ? "No results found. Try a different keyword."
-                  : "Enter a keyword to search for businesses, products, services and categories."}
+                  : "Start typing in the search bar to see live results as you type."}
           </p>
         </div>
       </div>
@@ -299,7 +347,7 @@ export default function SearchResults() {
             <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <h3 className="text-lg font-bold text-gray-900 mb-2">Start searching</h3>
             <p className="text-sm text-gray-500">
-              Use the search bar above to find businesses, products, services and categories by name.
+              Type in the search bar above. Results appear live as you type, grouped by product, service, business and more.
             </p>
           </div>
         ) : !data || totalCount === 0 ? (
@@ -342,21 +390,27 @@ export default function SearchResults() {
               <>
                 {activeTab === "all" ? (
                   <div className="space-y-10">
-                    {["businesses", "products", "services", "categories"].map((key) => {
+                    {GROUP_ORDER.map((key) => {
                       const group = data[key];
                       if (!group?.items?.length) return null;
+                      const meta = GROUP_META[key];
+                      const Icon = meta.icon;
                       return (
                         <div key={key}>
-                          <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-extrabold text-gray-900 capitalize">{key}</h2>
+                          <div className="flex items-center gap-2 mb-4">
+                            <Icon className="w-5 h-5 text-blue-600" />
+                            <h2 className="text-lg font-extrabold text-gray-900">{meta.label}</h2>
+                            {group.total > group.items.length && (
+                              <button
+                                onClick={() => setActiveTab(key)}
+                                className="text-xs font-bold text-blue-600 hover:underline cursor-pointer border-none bg-transparent"
+                              >
+                                See all {group.total}
+                              </button>
+                            )}
                           </div>
                           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                            {group.items.map((item) => {
-                              if (key === "businesses") return <BusinessCard key={item.id} biz={item} />;
-                              if (key === "products") return <ProductCard key={item.id} product={item} />;
-                              if (key === "services") return <ServiceCard key={item.id} service={item} />;
-                              return <CategoryCard key={item.id} category={item} />;
-                            })}
+                            {group.items.map((item) => meta.card(item))}
                           </div>
                         </div>
                       );
@@ -364,12 +418,7 @@ export default function SearchResults() {
                   </div>
                 ) : (
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {activeItems.map((item) => {
-                      if (item.__type === "businesses") return <BusinessCard key={item.id} biz={item} />;
-                      if (item.__type === "products") return <ProductCard key={item.id} product={item} />;
-                      if (item.__type === "services") return <ServiceCard key={item.id} service={item} />;
-                      return <CategoryCard key={item.id} category={item} />;
-                    })}
+                    {activeItems.map((item) => GROUP_META[activeTab].card(item))}
                   </div>
                 )}
               </>

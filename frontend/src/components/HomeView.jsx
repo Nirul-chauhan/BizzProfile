@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { ShieldCheck, MapPin, Star, Phone, MessageCircle, Tag, ArrowRight, Building2, Eye, CheckCircle2, ChevronLeft, ChevronRight, Pause, Play, Grid3X3 } from "lucide-react";
 import { searchProfiles, getCategories, getPopularCategories, getFeaturedBusinesses } from "../api";
+import MoreValueAddsSection from './MoreValueAddsSection';
 import { HOME_SLIDES, HOME_SIDEBAR_CHECKLIST, HOME_STATS, WHAT_IS_CARDS, WHY_FEATURES, USES_CARDS, BENEFITS_CARDS, HOW_IT_WORKS_STEPS, CAT_COLORS, CAT_BGS, CAT_TEXTS } from "./sharedViewData";
 
 export default function HomeView() {
@@ -175,6 +176,9 @@ export default function HomeView() {
         </div>
       </section>
 
+      {/* More Value Adds */}
+      <MoreValueAddsSection />
+
       {/* What Is Section */}
       <section className="py-16 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -325,3 +329,4 @@ export default function HomeView() {
     </div>
   );
 }
+

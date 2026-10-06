@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
   ChevronDown, Menu, X, LogOut, Camera, Trash2, ShieldCheck, Info,
   PenSquare, Phone, Home, Briefcase, User, Grid3X3, MapPin, Star,
   PhoneCall, MessageCircle, Tag, ArrowRight, Building2, Eye, Smartphone,
   Globe, Zap, ShoppingBag, BookOpen, Tag as TagIcon, Mail, Clock,
-  CheckCircle2, Navigation, Loader,
+  CheckCircle2, Navigation,
 } from "lucide-react";
-import { searchProfiles, getCategories, getPopularCategories, updateProfile, uploadProfilePic, removeProfilePic, getNearbyProfiles } from "../api";
+import { searchProfiles, getCategories, getPopularCategories, updateProfile, uploadProfilePic, removeProfilePic } from "../api";
 import SearchableSelect from "./SearchableSelect";
 import { COUNTRIES, getStatesForCountry, getCitiesForState } from "./locationData";
 import {
@@ -46,12 +46,6 @@ export default function EndUserView() {
   const [categoriesList, setCategoriesList] = useState([]);
   const [popularCategories, setPopularCategories] = useState([]);
   const [showAllCategories, setShowAllCategories] = useState(false);
-
-  // Near Me states
-  const [nearbyLoading, setNearbyLoading] = useState(false);
-  const [nearbyResults, setNearbyResults] = useState([]);
-  const [nearbyError, setNearbyError] = useState("");
-  const [nearbyRadius, setNearbyRadius] = useState(10);
 
   // Profile edit states
   const [profileName, setProfileName] = useState("");
@@ -158,50 +152,6 @@ export default function EndUserView() {
     setShowProfileMenu(false);
     navigate("/");
   };
-
-  const handleNearMe = useCallback(() => {
-    if (!navigator.geolocation) {
-      setNearbyError("Geolocation is not supported by your browser.");
-      return;
-    }
-    setNearbyLoading(true);
-    setNearbyError("");
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const { latitude, longitude } = position.coords;
-          const result = await getNearbyProfiles(latitude, longitude, nearbyRadius);
-          setNearbyResults(result.results || []);
-          if ((result.results || []).length === 0) {
-            setNearbyError("No businesses found nearby. Try increasing the search radius.");
-          }
-        } catch (err) {
-          console.error("Nearby search failed:", err);
-          setNearbyError("Failed to fetch nearby businesses. Please try again.");
-          setNearbyResults([]);
-        } finally {
-          setNearbyLoading(false);
-        }
-      },
-      (error) => {
-        setNearbyLoading(false);
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            setNearbyError("Location permission denied. Please enable location access in your browser settings.");
-            break;
-          case error.POSITION_UNAVAILABLE:
-            setNearbyError("Location information unavailable. Please try again.");
-            break;
-          case error.TIMEOUT:
-            setNearbyError("Location request timed out. Please try again.");
-            break;
-          default:
-            setNearbyError("An unknown error occurred while getting your location.");
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
-    );
-  }, [nearbyRadius]);
 
   const scrollToSection = (id) => {
     setActiveSection(id);
@@ -373,100 +323,22 @@ export default function EndUserView() {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-gray-900">Search Radius</p>
-                    <p className="text-xs text-gray-500">Adjust how far to search from your location</p>
+                    <p className="text-xs text-gray-500">Choose 1, 3, 5 or 10 km and see what is really around you</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <select
-                    value={nearbyRadius}
-                    onChange={(e) => setNearbyRadius(Number(e.target.value))}
-                    className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    <option value={5}>5 km</option>
-                    <option value={10}>10 km</option>
-                    <option value={25}>25 km</option>
-                    <option value={50}>50 km</option>
-                    <option value={100}>100 km</option>
-                  </select>
-                  <button
-                    onClick={handleNearMe}
-                    disabled={nearbyLoading}
-                    className="px-6 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/25 cursor-pointer border-none disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {nearbyLoading ? (
-                      <><Loader className="w-4 h-4 animate-spin" /> Searching...</>
-                    ) : (
-                      <><MapPin className="w-4 h-4" /> Find Nearby</>
-                    )}
-                  </button>
-                </div>
+                {/* Single Nearby Me entry point. The /nearby page owns the
+                    1/3/5/10 km choice and does the real distance filtering
+                    against stored seller coordinates, so this section sends the
+                    visitor there instead of running a second, differently
+                    configured nearby lookup. */}
+                <Link
+                  to="/nearby"
+                  className="px-6 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/25 flex items-center gap-2 no-underline"
+                >
+                  <MapPin className="w-4 h-4" /> Nearby Me
+                </Link>
               </div>
             </div>
-
-            {nearbyError && (
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 text-center">
-                <p className="text-amber-700 text-sm font-medium">{nearbyError}</p>
-              </div>
-            )}
-
-            {nearbyResults.length > 0 && (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {nearbyResults.map((biz) => (
-                  <Link
-                    key={biz.id}
-                    to={`/enduser/business/${biz.slug}`}
-                    className="bg-white border border-gray-200/60 rounded-2xl p-6 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 no-underline group"
-                  >
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center text-white font-bold text-sm shadow-lg group-hover:scale-110 transition-transform">
-                        {biz.business_name?.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "BZ"}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {biz.is_verified && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-bold">
-                            <ShieldCheck className="w-3 h-3" /> Verified
-                          </span>
-                        )}
-                        {biz.distance_km !== undefined && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold">
-                            <MapPin className="w-3 h-3" /> {biz.distance_km.toFixed(1)} km
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">{biz.business_name}</h3>
-                    <p className="text-sm text-gray-500 mb-3 line-clamp-2">{biz.description || "No description available"}</p>
-                    <div className="flex items-center gap-4 text-xs text-gray-400">
-                      {biz.city && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{biz.city}</span>}
-                      {biz.category?.name && <span className="flex items-center gap-1"><Tag className="w-3 h-3" />{biz.category.name}</span>}
-                    </div>
-                    <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-100">
-                      {biz.phone && (
-                        <a href={`tel:${biz.phone}`} onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-600 text-xs font-medium rounded-lg hover:bg-emerald-100 transition-colors no-underline">
-                          <Phone className="w-3 h-3" /> Call
-                        </a>
-                      )}
-                      <span className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 text-xs font-medium rounded-lg">
-                        <Eye className="w-3 h-3" /> View Details
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-
-            {!nearbyLoading && !nearbyError && nearbyResults.length === 0 && (
-              <div className="text-center py-16">
-                <div className="w-20 h-20 bg-emerald-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                  <MapPin className="w-10 h-10 text-emerald-500" />
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Find Businesses Near You</h3>
-                <p className="text-gray-500 mb-6 max-w-md mx-auto">Click "Find Nearby" to discover verified businesses in your area using your live location.</p>
-                <button onClick={handleNearMe} className="px-8 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/25 cursor-pointer border-none">
-                  Enable Location & Search
-                </button>
-              </div>
-            )}
           </div>
         </div>
       )}

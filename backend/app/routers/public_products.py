@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies.database import get_db_session
-from app.models.product import Product, ProductImage, ProductStatus
+from app.models.product import Product, ProductImage, ProductStatus, ProductApprovalStatus
 from app.models.biz_profile import BizProfile
 from app.models.category import Category, Subcategory
 
@@ -39,6 +39,7 @@ class ProductCard(BaseModel):
     price: float | None
     price_unit: str | None
     is_available: bool
+    is_trending: bool = False
     profile_id: int | None = None
     category: ProductCategoryInfo | None = None
     business_name: str | None = None
@@ -85,6 +86,7 @@ def _serialize_product(prod: Product) -> dict:
         "price": prod.price,
         "price_unit": prod.price_unit,
         "is_available": prod.is_available,
+        "is_trending": prod.is_trending,
         "profile_id": prod.profile_id,
         "category": {
             "id": prod.category.id,
@@ -144,6 +146,7 @@ def list_trending_categories(
                 .where(
                     Product.category_id == cat.id,
                     Product.status == ProductStatus.ACTIVE.value,
+                    Product.approval_status == ProductApprovalStatus.APPROVED.value,
                     Product.is_available == True,
                     BizProfile.is_active == True,
                     BizProfile.is_public == True,
@@ -200,7 +203,13 @@ def list_trending_products(
     limit: int = Query(7, ge=1, le=12),
     db: Session = Depends(get_db_session),
 ):
-    """Return trending products. Falls back to recent active products if none are trending."""
+    """Return admin-flagged trending products.
+
+    If no product is flagged trending, fall back to the most recent active
+    products so the homepage is never empty. In that case every returned item
+    carries ``is_trending=False``, so callers can label the section honestly
+    (e.g. "Recently added") instead of implying admin curation.
+    """
     q = (
         select(Product)
         .join(BizProfile, Product.profile_id == BizProfile.id)
@@ -214,6 +223,7 @@ def list_trending_products(
         .where(
             Product.is_trending == True,
             Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
             Product.is_available == True,
             BizProfile.is_active == True,
             BizProfile.is_public == True,
@@ -237,6 +247,7 @@ def list_trending_products(
             )
             .where(
                 Product.status == ProductStatus.ACTIVE.value,
+                Product.approval_status == ProductApprovalStatus.APPROVED.value,
                 Product.is_available == True,
                 BizProfile.is_active == True,
                 BizProfile.is_public == True,
@@ -259,6 +270,7 @@ def count_trending_products(
         .where(
             Product.is_trending == True,
             Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
             Product.is_available == True,
             BizProfile.is_active == True,
             BizProfile.is_public == True,
@@ -290,6 +302,7 @@ def list_best_sellers(
         .where(
             Product.is_best_seller == True,
             Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
             Product.is_available == True,
             BizProfile.is_active == True,
             BizProfile.is_public == True,
@@ -321,6 +334,7 @@ def count_best_sellers(
         .where(
             Product.is_best_seller == True,
             Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
             Product.is_available == True,
             BizProfile.is_active == True,
             BizProfile.is_public == True,
@@ -344,6 +358,7 @@ def list_products(
     """Return active products filtered by category/subcategory, with pagination."""
     conditions = [
         Product.status == ProductStatus.ACTIVE.value,
+        Product.approval_status == ProductApprovalStatus.APPROVED.value,
         Product.is_available == True,
         BizProfile.is_active == True,
         BizProfile.is_public == True,
@@ -402,6 +417,7 @@ def get_product_detail(
         .where(
             Product.id == product_id,
             Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
             BizProfile.is_active == True,
             BizProfile.is_public == True,
         )

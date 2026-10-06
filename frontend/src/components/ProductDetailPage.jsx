@@ -2,24 +2,19 @@ import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ShieldCheck, MapPin, Phone, Tag, Package,
-  Send, X, CheckCircle2, ChevronLeft, ChevronRight,
+  Send, ChevronLeft, ChevronRight,
 } from "lucide-react";
-import { getPublicProduct, buyerCreateEnquiry } from "../api";
-import { useAuth } from "../context/AuthContext";
+import { getPublicProduct, getAuthToken } from "../api";
+import EnquiryFormModal from "./EnquiryFormModal";
 
 export default function ProductDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAuthenticated, isBuyer } = useAuth();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeImg, setActiveImg] = useState(0);
   const [showInquiry, setShowInquiry] = useState(false);
-  const [inquiryMsg, setInquiryMsg] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [inquiryError, setInquiryError] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -29,26 +24,6 @@ export default function ProductDetailPage() {
       .catch((e) => setError(e.message || "Product not found"))
       .finally(() => setLoading(false));
   }, [id]);
-
-  const handleInquiry = async () => {
-    if (!inquiryMsg.trim()) return;
-    if (!isAuthenticated) return navigate("/login");
-    if (!isBuyer) { setInquiryError("Only buyers can send enquiries."); return; }
-    setSending(true);
-    setInquiryError("");
-    try {
-      await buyerCreateEnquiry({
-        profile_id: product.profile_id,
-        product_id: product.id,
-        message: inquiryMsg.trim(),
-      });
-      setSent(true);
-      setTimeout(() => { setShowInquiry(false); setSent(false); setInquiryMsg(""); }, 2500);
-    } catch (e) {
-      setInquiryError(e.message || "Failed to send enquiry");
-    }
-    setSending(false);
-  };
 
   if (loading) {
     return (
@@ -185,7 +160,7 @@ export default function ProductDetailPage() {
                   View Business
                 </Link>
               )}
-              <button onClick={() => { if (!isAuthenticated) return navigate("/login"); setShowInquiry(true); }} className="flex-1 py-3 bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer flex items-center justify-center gap-2">
+              <button onClick={() => { if (!getAuthToken()) return navigate("/login", { state: { from: `/products/${id}` } }); setShowInquiry(true); }} className="flex-1 py-3 bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer flex items-center justify-center gap-2">
                 <Send className="w-4 h-4" /> Send Inquiry
               </button>
             </div>
@@ -194,44 +169,11 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Inquiry Modal */}
-      {showInquiry && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !sending && setShowInquiry(false)}>
-          <div className="bg-white rounded-xl max-w-lg w-full shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Send Inquiry</h3>
-                <p className="text-xs text-gray-500 mt-0.5">About {product.name}</p>
-              </div>
-              <button onClick={() => setShowInquiry(false)} className="text-gray-400 hover:text-gray-600 border-none bg-transparent cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            {sent ? (
-              <div className="p-8 text-center">
-                <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-                <h4 className="text-base font-bold text-gray-900 mb-1">Inquiry Sent!</h4>
-                <p className="text-sm text-gray-500">The seller will respond soon.</p>
-              </div>
-            ) : (
-              <div className="p-6 space-y-4">
-                {inquiryError && <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-lg">{inquiryError}</p>}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Your Message *</label>
-                  <textarea
-                    value={inquiryMsg}
-                    onChange={(e) => setInquiryMsg(e.target.value)}
-                    rows={4}
-                    placeholder="Describe what you're looking for..."
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none resize-none"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button onClick={() => setShowInquiry(false)} className="flex-1 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 border-none cursor-pointer">Cancel</button>
-                  <button onClick={handleInquiry} disabled={sending || !inquiryMsg.trim()} className="flex-1 py-2.5 text-sm font-bold text-white bg-gray-900 rounded-lg hover:bg-gray-800 disabled:opacity-50 border-none cursor-pointer">{sending ? "Sending..." : "Send"}</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <EnquiryFormModal
+        open={showInquiry}
+        target={product ? { type: "product", id: product.id, name: product.name, profile_id: product.profile_id } : null}
+        onClose={() => setShowInquiry(false)}
+      />
     </div>
   );
 }

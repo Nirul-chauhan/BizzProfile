@@ -30,12 +30,33 @@ function CategoryIcon({ icon, className = "" }) {
   );
 }
 
+/**
+ * Resolve a category slug against the tree, returning the category and its
+ * parent.
+ *
+ * The tree is two levels deep — top-level categories plus nested `children` —
+ * and both the homepage sidebar and the mega menu link directly to those nested
+ * children. Searching only the top-level array therefore failed for every nested
+ * child and silently rendered the "All Categories" view instead of the category
+ * the user clicked. Returns `{ category: null }` when nothing matches.
+ */
+function findCategoryBySlug(tree, slug) {
+  if (!slug) return { category: null, parent: null };
+  for (const cat of tree || []) {
+    if (cat.slug === slug) return { category: cat, parent: null };
+    const child = (cat.children || []).find((c) => c.slug === slug);
+    if (child) return { category: child, parent: cat };
+  }
+  return { category: null, parent: null };
+}
+
 export default function CategoryPage() {
   const { categorySlug } = useParams();
   const navigate = useNavigate();
   const [tree, setTree] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCat, setSelectedCat] = useState(null);
+  const [selectedParent, setSelectedParent] = useState(null);
   const [businesses, setBusinesses] = useState([]);
   const [bizLoading, setBizLoading] = useState(false);
   const [totalPages, setTotalPages] = useState(0);
@@ -52,10 +73,12 @@ export default function CategoryPage() {
         if (!mounted) return;
         setTree(data);
         if (categorySlug) {
-          const found = data.find((c) => c.slug === categorySlug);
-          if (found) setSelectedCat(found);
+          const { category, parent } = findCategoryBySlug(data, categorySlug);
+          setSelectedCat(category);
+          setSelectedParent(parent);
         } else {
           setSelectedCat(null);
+          setSelectedParent(null);
         }
       })
       .catch(() => {})
@@ -104,6 +127,14 @@ export default function CategoryPage() {
         <Link to="/" className="hover:text-indigo-600">Home</Link>
         <ChevronRight className="w-3 h-3" />
         <Link to="/categories" className="hover:text-indigo-600">Categories</Link>
+        {selectedParent && (
+          <>
+            <ChevronRight className="w-3 h-3" />
+            <Link to={`/categories/${selectedParent.slug}`} className="hover:text-indigo-600">
+              {selectedParent.name}
+            </Link>
+          </>
+        )}
         {selectedCat && (
           <>
             <ChevronRight className="w-3 h-3" />
@@ -120,10 +151,10 @@ export default function CategoryPage() {
           </h1>
           {selectedCat && (
             <button
-              onClick={() => { setSelectedCat(null); navigate("/categories"); }}
-              className="text-sm text-indigo-600 hover:text-indigo-700 mt-1"
+              onClick={() => navigate(selectedParent ? `/categories/${selectedParent.slug}` : "/categories")}
+              className="text-sm text-indigo-600 hover:text-indigo-700 mt-1 cursor-pointer border-none bg-transparent p-0"
             >
-              ← View all categories
+              ← {selectedParent ? `Back to ${selectedParent.name}` : "View all categories"}
             </button>
           )}
         </div>
@@ -358,6 +389,7 @@ export function SubcategoryPage() {
   const { categorySlug, subcategorySlug } = useParams();
   const [category, setCategory] = useState(null);
   const [subcategory, setSubcategory] = useState(null);
+  const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [businesses, setBusinesses] = useState([]);
   const [bizLoading, setBizLoading] = useState(false);
@@ -374,12 +406,12 @@ export function SubcategoryPage() {
     getCategoryTree()
       .then((data) => {
         if (!mounted) return;
-        const cat = data.find((c) => c.slug === categorySlug);
-        if (cat) {
-          setCategory(cat);
-          const sub = cat.subcategories?.find((s) => s.slug === subcategorySlug);
-          if (sub) setSubcategory(sub);
-        }
+        // Walks nested children too, so a subcategory reached through a
+        // sub-group still resolves instead of falling back to "All Categories".
+        const { category: cat } = findCategoryBySlug(data, categorySlug);
+        setCategory(cat || null);
+        setSubcategory(cat ? cat.subcategories?.find((s) => s.slug === subcategorySlug) || null : null);
+        setNotFound(!cat || !cat.subcategories?.some((s) => s.slug === subcategorySlug));
       })
       .catch(() => {})
       .finally(() => { if (mounted) setLoading(false); });
@@ -433,6 +465,31 @@ export function SubcategoryPage() {
         <div className="animate-pulse space-y-4">
           <div className="h-6 bg-gray-200 rounded w-64" />
           <div className="h-32 bg-gray-200 rounded-xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        <nav className="flex items-center gap-1 text-sm text-gray-500 mb-6">
+          <Link to="/" className="hover:text-indigo-600">Home</Link>
+          <ChevronRight className="w-3 h-3" />
+          <Link to="/categories" className="hover:text-indigo-600">Categories</Link>
+        </nav>
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+          <LayoutGrid className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+          <h1 className="text-lg font-medium text-gray-700">Category not found</h1>
+          <p className="text-sm text-gray-500 mt-1 mb-5">
+            This category or subcategory is no longer available.
+          </p>
+          <Link
+            to="/categories"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 transition-colors no-underline"
+          >
+            Browse all categories <ArrowRight className="w-4 h-4" />
+          </Link>
         </div>
       </div>
     );

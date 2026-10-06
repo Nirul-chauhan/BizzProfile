@@ -72,6 +72,7 @@ import {
   buyerUploadVideo,
   buyerUpdateVideo,
   buyerDeleteVideo,
+  buyerListQuotations,
 } from "../api";
 import BestSellerRequests from "./BestSellerRequests";
 import TrendingProductRequests from "./TrendingProductRequests";
@@ -155,6 +156,17 @@ export default function BuyerDashboard() {
   const [categories, setCategories] = useState([]);
   const [societies, setSocieties] = useState([]);
 
+  // Quotations awaiting the buyer's decision, polled so a quote that arrives
+  // while the buyer is elsewhere still surfaces instead of going unnoticed.
+  const [pendingQuotes, setPendingQuotes] = useState([]);
+  const [quoteBellOpen, setQuoteBellOpen] = useState(false);
+  const [toastQuote, setToastQuote] = useState(null);
+  const seenQuoteIds = useRef(null);
+
+  // Set when the buyer opens the quotations list from a specific enquiry, so
+  // the list can be scoped to that enquiry instead of showing everything.
+  const [quotationEnquiryFilter, setQuotationEnquiryFilter] = useState(null);
+
   const [reqPage, setReqPage] = useState(1);
   const [reqHasMore, setReqHasMore] = useState(true);
   const [leadPage, setLeadPage] = useState(1);
@@ -232,6 +244,60 @@ export default function BuyerDashboard() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Watch for quotations the seller sends while the buyer is elsewhere, so a
+  // quote never sits unseen. Open (SENT) and not-yet-expired ones only.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const data = await buyerListQuotations(1, 20);
+        if (!active) return;
+        const open = (data?.items || []).filter(
+          (q) =>
+            (q.status === "SENT" || q.status === "PENDING") && !q.is_expired
+        );
+        setPendingQuotes(open);
+        const ids = new Set(open.map((q) => q.id));
+        if (seenQuoteIds.current === null) {
+          // First load only establishes a baseline; don't replay old quotes.
+          seenQuoteIds.current = ids;
+        } else {
+          const fresh = open.filter((q) => !seenQuoteIds.current.has(q.id));
+          seenQuoteIds.current = ids;
+          if (fresh.length) setToastQuote(fresh[0]);
+        }
+      } catch {
+        // Notification polling is best-effort.
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [user]);
+
+  // Auto-dismiss the quotation toast.
+  useEffect(() => {
+    if (!toastQuote) return;
+    const timer = setTimeout(() => setToastQuote(null), 12000);
+    return () => clearTimeout(timer);
+  }, [toastQuote]);
+
+  const openQuotation = () => {
+    setToastQuote(null);
+    setQuoteBellOpen(false);
+    setActiveSection("quotations");
+  };
+
+  // Jump from an enquiry straight to the prices that seller sent for it.
+  const openEnquiryQuotations = (enquiryId) => {
+    setQuotationEnquiryFilter(enquiryId);
+    setActiveSection("quotations");
+  };
 
   const loadSectionData = async () => {
     setLoading(true);
@@ -654,15 +720,83 @@ export default function BuyerDashboard() {
           }`}
         >
           <div className="p-5 border-b border-white/10">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-xl flex items-center justify-center shadow-lg">
-                <Building2 className="w-5 h-5 text-white" />
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-xl flex items-center justify-center shadow-lg">
+                  <Building2 className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-white font-extrabold text-lg leading-tight">
+                    BizzProfile
+                  </h1>
+                  <p className="text-blue-300 text-[10px] font-medium">Buyer Portal</p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-white font-extrabold text-lg leading-tight">
-                  BizzProfile
-                </h1>
-                <p className="text-blue-300 text-[10px] font-medium">Buyer Portal</p>
+
+              {/* Quotation notification bell */}
+              <div className="relative">
+                <button
+                  onClick={() => setQuoteBellOpen((o) => !o)}
+                  className="relative w-9 h-9 flex items-center justify-center rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer border-none bg-transparent"
+                  aria-label={`Quotation notifications (${pendingQuotes.length} awaiting decision)`}
+                >
+                  <Bell className="w-5 h-5" />
+                  {pendingQuotes.length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+                      {pendingQuotes.length > 9 ? "9+" : pendingQuotes.length}
+                    </span>
+                  )}
+                </button>
+                {quoteBellOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setQuoteBellOpen(false)}
+                    />
+                    <div className="absolute right-0 mt-2 w-80 z-50 max-h-[70vh] overflow-y-auto rounded-xl shadow-2xl border border-gray-200 bg-white">
+                      <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                        <span className="text-xs font-extrabold text-gray-900 uppercase tracking-wide">
+                          Quotation Notifications
+                        </span>
+                        <span className="text-[11px] font-bold text-gray-400">
+                          {pendingQuotes.length} awaiting
+                        </span>
+                      </div>
+                      <div className="p-2 space-y-2">
+                        {pendingQuotes.length === 0 ? (
+                          <p className="text-xs text-gray-500 text-center py-6">
+                            No quotations waiting on you.
+                          </p>
+                        ) : (
+                          pendingQuotes.map((q) => (
+                            <button
+                              key={q.id}
+                              onClick={openQuotation}
+                              className="w-full text-left p-3 rounded-xl bg-blue-50/70 hover:bg-blue-100 transition-colors cursor-pointer border-none"
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="text-xs font-extrabold text-gray-900 truncate">
+                                  {q.business_name || "Seller"}
+                                </span>
+                                <span className="text-xs font-extrabold text-emerald-700 shrink-0">
+                                  ₹{Number(q.amount).toLocaleString("en-IN")}
+                                </span>
+                              </div>
+                              {q.product_name && (
+                                <p className="text-[11px] text-gray-500 truncate">
+                                  {q.quantity_label || `${q.quantity} units`} · {q.product_name}
+                                </p>
+                              )}
+                              <p className="text-[11px] text-blue-600 font-bold mt-1">
+                                Accept or reject this quote →
+                              </p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -671,6 +805,7 @@ export default function BuyerDashboard() {
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.id;
+              const badge = item.id === "quotations" ? pendingQuotes.length : 0;
               return (
                 <button
                   key={item.id}
@@ -685,7 +820,12 @@ export default function BuyerDashboard() {
                   }`}
                 >
                   <Icon className="w-5 h-5" />
-                  {item.label}
+                  <span className="flex-1 text-left">{item.label}</span>
+                  {badge > 0 && (
+                    <span className="min-w-5 h-5 px-1.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+                      {badge > 9 ? "9+" : badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1301,68 +1441,21 @@ export default function BuyerDashboard() {
                         Find Businesses Near You
                       </h3>
                       <p className="text-sm text-gray-500">
-                        Search by location, society, or area
+                        Choose 1, 3, 5 or 10 km and see what is really around you
                       </p>
                     </div>
+                    {/* Single Nearby Me entry point. The /nearby page owns the
+                        radius choice (1/3/5/10 km) and does the real distance
+                        filtering against stored seller coordinates, so this card
+                        sends the buyer there rather than running its own fixed
+                        10 km lookup and rendering a second copy of the list. */}
                     <button
-                      onClick={() => {
-                        if (navigator.geolocation) {
-                          navigator.geolocation.getCurrentPosition(
-                            (pos) => {
-                              const { latitude, longitude } = pos.coords;
-                              searchProfiles({
-                                lat: latitude,
-                                lng: longitude,
-                                radius_km: 10,
-                                page_size: 12,
-                              })
-                                .then((result) => {
-                                  setNearbyBusinesses(result.items || []);
-                                })
-                                .catch(() => {});
-                            },
-                            () => {},
-                            { enableHighAccuracy: true, timeout: 10000 }
-                          );
-                        }
-                      }}
+                      onClick={() => navigate("/nearby")}
                       className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold text-sm rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md cursor-pointer border-none"
                     >
                       <MapPin className="w-4 h-4" /> Nearby Me
                     </button>
                   </div>
-                  {nearbyBusinesses.length > 0 && (
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {nearbyBusinesses.slice(0, 6).map((biz) => (
-                        <Link
-                          key={biz.id}
-                          to={`/enduser/business/${biz.slug || ""}`}
-                          className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors no-underline"
-                        >
-                          {biz.logo_url ? (
-                            <img
-                              src={biz.logo_url}
-                              alt=""
-                              className="w-10 h-10 rounded-lg object-cover"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 text-sm font-bold">
-                              {(biz.business_name || "?")[0]}
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-gray-900 truncate">
-                              {biz.business_name}
-                            </p>
-                            <p className="text-xs text-gray-500 flex items-center gap-1">
-                              <MapPin className="w-3 h-3" />
-                              {biz.city || "Near you"}
-                            </p>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 <div className="mb-6">
@@ -1907,9 +2000,12 @@ export default function BuyerDashboard() {
                 )}
               </div>
             ) : activeSection === "enquiries" ? (
-              <BuyerEnquiries />
+              <BuyerEnquiries onViewQuotations={openEnquiryQuotations} />
             ) : activeSection === "quotations" ? (
-              <BuyerQuotations />
+              <BuyerQuotations
+                enquiryFilter={quotationEnquiryFilter}
+                onClearEnquiryFilter={() => setQuotationEnquiryFilter(null)}
+              />
             ) : activeSection === "favorites" ? (
               /* ========== FAVORITES ========== */
               <div>
@@ -2237,6 +2333,65 @@ export default function BuyerDashboard() {
           </div>
         </main>
       </div>
+
+      {/* Toast: a quotation just arrived and needs a decision */}
+      {toastQuote && (
+        <div className="fixed bottom-5 right-5 z-[60] w-[22rem] max-w-[calc(100vw-2.5rem)]">
+          <div className="bg-white rounded-2xl shadow-2xl border border-blue-100 overflow-hidden">
+            <div className="bg-blue-500 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-white text-xs font-extrabold uppercase tracking-wide">
+                New Quotation
+              </span>
+              <button
+                onClick={() => setToastQuote(null)}
+                className="text-white/80 hover:text-white border-none bg-transparent cursor-pointer"
+                aria-label="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4">
+              <p className="text-sm font-bold text-gray-900">
+                {toastQuote.business_name || "A seller"} sent you a quotation
+              </p>
+              <div className="mt-2 space-y-1 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500 text-xs">Quantity</span>
+                  <span className="font-semibold text-gray-800">
+                    {toastQuote.quantity_label || `${toastQuote.quantity} units`}
+                  </span>
+                </div>
+                {toastQuote.unit_price != null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500 text-xs">Unit Price</span>
+                    <span className="font-semibold text-gray-800">
+                      ₹{Number(toastQuote.unit_price).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500 text-xs">Total</span>
+                  <span className="font-extrabold text-emerald-700">
+                    ₹{Number(toastQuote.amount).toLocaleString("en-IN")}
+                  </span>
+                </div>
+              </div>
+              {toastQuote.delivery_display && (
+                <p className="text-xs text-gray-500 mt-2">
+                  Delivery: {toastQuote.delivery_display}
+                  {toastQuote.valid_days ? ` · Valid for ${toastQuote.valid_days} days` : ""}
+                </p>
+              )}
+              <button
+                onClick={openQuotation}
+                className="w-full mt-3 px-4 py-2 bg-blue-500 text-white text-sm font-bold rounded-xl hover:bg-blue-600 transition-colors cursor-pointer border-none"
+              >
+                Accept or Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

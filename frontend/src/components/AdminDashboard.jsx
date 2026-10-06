@@ -5,6 +5,7 @@ import SearchableSelect from "./SearchableSelect";
 import CategoryManagement from "./CategoryManagement";
 import SubcategoryManagement from "./SubcategoryManagement";
 import BannerManagement from "./BannerManagement";
+import MoreValueAddsManagement from "./MoreValueAddsManagement";
 import BestSellerManagement from "./BestSellerManagement";
 import AdminEnquiries from "./AdminEnquiries";
 import TrendingCategoryManagement from "./TrendingCategoryManagement";
@@ -43,6 +44,7 @@ import {
   Pencil,
   Trash2,
   MessageSquare,
+  Sparkles,
 } from "lucide-react";
 
 const NAV = [
@@ -55,6 +57,7 @@ const NAV = [
   { id: "businesses", icon: Building2, label: "Businesses" },
   { id: "featured", icon: Star, label: "Featured" },
   { id: "banners", icon: Image, label: "Banners" },
+  { id: "more-value-adds", icon: Sparkles, label: "More Value Adds" },
   { id: "trending-videos", icon: Play, label: "Trending Videos" },
   { id: "services", icon: Briefcase, label: "Services" },
   { id: "best-sellers", icon: Star, label: "Best Sellers" },
@@ -1754,6 +1757,8 @@ export default function AdminDashboard() {
             </div>
           ) : activeNav === "banners" ? (
             <BannerManagement />
+          ) : activeNav === "more-value-adds" ? (
+            <MoreValueAddsManagement />
           ) : activeNav === "trending-videos" ? (
             <TrendingVideoManagement />
           ) : activeNav === "services" ? (

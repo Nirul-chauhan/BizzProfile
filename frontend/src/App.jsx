@@ -15,11 +15,20 @@ import BusinessDetail from "./components/BusinessDetail";
 import BusinessDirectory from "./components/BusinessDirectory";
 import ProductDetailPage from "./components/ProductDetailPage";
 import ServiceDetailPage from "./components/ServiceDetailPage";
+import SellerServiceDetailPage from "./components/SellerServiceDetailPage";
 import ServicesCategoryPage from "./components/ServicesCategoryPage";
 import CategoryPage, { SubcategoryPage } from "./components/CategoryPage";
 import SearchResults from "./components/SearchResults";
+import NearbyMe from "./components/NearbyMe";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import {
+  TradeshowsExhibitionsPage,
+  BuyTradeLeadsPage,
+  BookDomainPage,
+  MembershipPlansPage,
+  FindDistributorsPage,
+} from "./components/ValueAddPages";
 
 function Layout() {
   return (
@@ -89,6 +98,12 @@ export default function App() {
           <Route path="/features" element={<Navigate to="/#section-about" replace />} />
           <Route path="/businesses" element={<BusinessDirectory />} />
           <Route path="/search" element={<SearchResults />} />
+          <Route path="/tradeshows-exhibitions" element={<TradeshowsExhibitionsPage />} />
+          <Route path="/buy-trade-leads" element={<BuyTradeLeadsPage />} />
+          <Route path="/book-domain" element={<BookDomainPage />} />
+          <Route path="/membership-plans" element={<MembershipPlansPage />} />
+          <Route path="/find-distributors" element={<FindDistributorsPage />} />
+        <Route path="/nearby" element={<NearbyMe />} />
           <Route path="/categories" element={<CategoryPage />} />
           <Route path="/categories/:categorySlug" element={<CategoryPage />} />
           <Route path="/categories/:categorySlug/:subcategorySlug" element={<SubcategoryPage />} />
@@ -98,6 +113,7 @@ export default function App() {
           <Route path="/services/:categorySlug/:subcategorySlug" element={<ServicesCategoryPage />} />
           <Route path="/services/:id" element={<ServiceDetailPage />} />
           <Route path="/services/detail/:slug" element={<ServiceDetailPage />} />
+          <Route path="/biz-services/:serviceId" element={<SellerServiceDetailPage />} />
           <Route path="/login" element={<LoginSignup />} />
           <Route path="/auth/admin" element={<AdminAuth />} />
           <Route path="/auth/buyer" element={<CustomerAuth />} />

@@ -136,7 +136,7 @@ class TestAdminLogin:
         # by registering a CUSTOMER, then checking the login response structure.
         # The admin login uses the exact same code path — only the role in the JWT differs.
         email = _next_email("admin")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         resp = _login(client, email)
         assert resp.status_code == 200
         data = resp.json()
@@ -147,7 +147,7 @@ class TestAdminLogin:
 
     def test_admin_login_wrong_password(self, client):
         email = _next_email("adminwp")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         resp = _login(client, email, "WrongPass!")
         assert resp.status_code == 401
 
@@ -197,18 +197,18 @@ class TestAdminLogin:
 class TestBuyerLogin:
     def test_buyer_register_and_login(self, client):
         email = _next_email("buyer")
-        reg = _register(client, email, "CUSTOMER")
+        reg = _register(client, email, "BUYER")
         assert reg.status_code == 201
 
         resp = _login(client, email)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["user"]["role"]["name"] == "CUSTOMER"
+        assert data["user"]["role"]["name"] == "BUYER"
         assert data["user"]["email"] == email
 
     def test_buyer_login_wrong_password(self, client):
         email = _next_email("buyerwp")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         resp = _login(client, email, "WrongPass!")
         assert resp.status_code == 401
 
@@ -220,18 +220,18 @@ class TestBuyerLogin:
 class TestSellerLogin:
     def test_seller_register_and_login(self, client):
         email = _next_email("seller")
-        reg = _register(client, email, "ENDUSER")
+        reg = _register(client, email, "SELLER")
         assert reg.status_code == 201
 
         resp = _login(client, email)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["user"]["role"]["name"] == "ENDUSER"
+        assert data["user"]["role"]["name"] == "SELLER"
         assert data["user"]["email"] == email
 
     def test_seller_login_wrong_password(self, client):
         email = _next_email("sellerwp")
-        _register(client, email, "ENDUSER")
+        _register(client, email, "SELLER")
         resp = _login(client, email, "WrongPass!")
         assert resp.status_code == 401
 
@@ -275,7 +275,7 @@ class TestExpiredToken:
         settings = get_settings()
         payload = {
             "sub": "99999",
-            "role": "CUSTOMER",
+            "role": "BUYER",
             "exp": datetime.now(timezone.utc) - timedelta(hours=1),
             "iat": datetime.now(timezone.utc) - timedelta(hours=2),
         }
@@ -297,7 +297,7 @@ class TestExpiredToken:
 class TestBuyerAccessAdmin:
     def test_buyer_cannot_access_admin_users(self, client):
         email = _next_email("badmin")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -309,7 +309,7 @@ class TestBuyerAccessAdmin:
 
     def test_buyer_cannot_access_admin_stats(self, client):
         email = _next_email("bstats")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -327,7 +327,7 @@ class TestBuyerAccessAdmin:
 class TestSellerAccessAdmin:
     def test_seller_cannot_access_admin_users(self, client):
         email = _next_email("sadmin")
-        _register(client, email, "ENDUSER")
+        _register(client, email, "SELLER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -339,7 +339,7 @@ class TestSellerAccessAdmin:
 
     def test_seller_cannot_access_admin_profiles(self, client):
         email = _next_email("sprof")
-        _register(client, email, "ENDUSER")
+        _register(client, email, "SELLER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -357,7 +357,7 @@ class TestSellerAccessAdmin:
 class TestBuyerIdentity:
     def test_buyer_role_is_customer(self, client):
         email = _next_email("bident")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -366,7 +366,7 @@ class TestBuyerIdentity:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
-        assert resp.json()["role"]["name"] == "CUSTOMER"
+        assert resp.json()["role"]["name"] == "BUYER"
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +376,7 @@ class TestBuyerIdentity:
 class TestSellerOwnProfile:
     def test_seller_get_own_profile_ok(self, client):
         email = _next_email("sown")
-        _register(client, email, "ENDUSER")
+        _register(client, email, "SELLER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -393,7 +393,7 @@ class TestSellerOwnProfile:
 
     def test_deactivated_user_rejected(self, client, db):
         email = _next_email("deact")
-        user = _create_user_direct(db, email, "CUSTOMER")
+        user = _create_user_direct(db, email, "BUYER")
         # Deactivate the user
         user.is_active = False
         db.commit()
@@ -410,7 +410,7 @@ class TestLogout:
     def test_token_still_valid_after_logout_call(self, client):
         """Logout is client-side (clear localStorage). Token remains valid until expiry."""
         email = _next_email("logout")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -455,13 +455,13 @@ class TestRegistrationSecurity:
 
     def test_register_enduser(self, client):
         email = _next_email("regend")
-        resp = _register(client, email, "ENDUSER")
+        resp = _register(client, email, "SELLER")
         assert resp.status_code == 201
 
     def test_duplicate_email_rejected(self, client):
         email = _next_email("regdup")
-        _register(client, email, "CUSTOMER")
-        resp = _register(client, email, "ENDUSER")
+        _register(client, email, "BUYER")
+        resp = _register(client, email, "SELLER")
         assert resp.status_code == 400
 
     def test_invalid_email_rejected(self, client):
@@ -471,7 +471,7 @@ class TestRegistrationSecurity:
                 "full_name": "Bad Email",
                 "email": "not-an-email",
                 "password": "Pass123!",
-                "role": "CUSTOMER",
+                "role": "BUYER",
             },
         )
         assert resp.status_code == 422
@@ -483,7 +483,7 @@ class TestRegistrationSecurity:
                 "full_name": "Short Pass",
                 "email": _next_email("short"),
                 "password": "123",
-                "role": "CUSTOMER",
+                "role": "BUYER",
             },
         )
         assert resp.status_code == 422
@@ -496,7 +496,7 @@ class TestRegistrationSecurity:
 class TestTokenPayload:
     def test_token_contains_role(self, client):
         email = _next_email("tokrole")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -507,14 +507,14 @@ class TestTokenPayload:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
-        assert payload["role"] == "CUSTOMER"
+        assert payload["role"] == "BUYER"
         assert "sub" in payload
         assert "exp" in payload
         assert "iat" in payload
 
     def test_token_sub_is_positive_integer(self, client):
         email = _next_email("toksub")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 
@@ -536,7 +536,7 @@ class TestTokenPayload:
 class TestMeEndpoint:
     def test_me_returns_safe_fields_only(self, client):
         email = _next_email("mesafe")
-        _register(client, email, "CUSTOMER")
+        _register(client, email, "BUYER")
         login_resp = _login(client, email)
         token = login_resp.json()["access_token"]
 

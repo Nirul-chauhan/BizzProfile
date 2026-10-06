@@ -1,10 +1,8 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import {
   MessageCircle,
   Clock,
-  CheckCircle2,
-  XCircle,
-  Send,
   Search,
   ArrowRight,
   Loader,
@@ -12,13 +10,17 @@ import {
   Building2,
   Package,
   Briefcase,
+  FileText,
+  Boxes,
 } from "lucide-react";
 import { buyerListEnquiries } from "../api";
 
 const STATUS_STYLES = {
   NEW: "bg-blue-100 text-blue-700",
-  READ: "bg-amber-100 text-amber-700",
-  REPLIED: "bg-emerald-100 text-emerald-700",
+  CONTACTED: "bg-amber-100 text-amber-700",
+  QUOTED: "bg-violet-100 text-violet-700",
+  ACCEPTED: "bg-emerald-100 text-emerald-700",
+  REJECTED: "bg-red-100 text-red-700",
   CLOSED: "bg-gray-100 text-gray-600",
 };
 
@@ -34,7 +36,7 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function BuyerEnquiries() {
+export default function BuyerEnquiries({ onViewQuotations }) {
   const [enquiries, setEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("ALL");
@@ -72,6 +74,11 @@ export default function BuyerEnquiries() {
       const query = searchQuery.toLowerCase();
       return (
         (e.message || "").toLowerCase().includes(query) ||
+      (e.requirement || "").toLowerCase().includes(query) ||
+      (e.location || "").toLowerCase().includes(query) ||
+        (e.business_name || "").toLowerCase().includes(query) ||
+        (e.product_name || "").toLowerCase().includes(query) ||
+        (e.service_name || "").toLowerCase().includes(query) ||
         String(e.id).includes(query) ||
         String(e.profile_id).includes(query)
       );
@@ -109,7 +116,7 @@ export default function BuyerEnquiries() {
         {[
           { label: "Total", count: enquiries.length, color: "bg-gray-50 text-gray-700" },
           { label: "New", count: statusCounts.NEW || 0, color: "bg-blue-50 text-blue-700" },
-          { label: "Replied", count: statusCounts.REPLIED || 0, color: "bg-emerald-50 text-emerald-700" },
+          { label: "Quoted", count: statusCounts.QUOTED || 0, color: "bg-violet-50 text-violet-700" },
           { label: "Closed", count: statusCounts.CLOSED || 0, color: "bg-gray-50 text-gray-500" },
         ].map((s) => (
           <button
@@ -154,51 +161,107 @@ export default function BuyerEnquiries() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((e) => (
-            <div
-              key={e.id}
-              className="bg-white border border-gray-200 rounded-2xl p-5 hover:shadow-md transition-all"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="text-sm font-bold text-gray-900">
-                      Enquiry #{e.id}
-                    </span>
-                    <StatusBadge status={e.status} />
+          {filtered.map((e) => {
+            const itemName = e.product_name || e.service_name;
+            const ItemIcon = e.product_id ? Package : Briefcase;
+            return (
+              <div
+                key={e.id}
+                className="bg-white border border-gray-200 rounded-2xl p-5 hover:shadow-md transition-all"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-3 mb-2">
+                      <span className="text-sm font-bold text-gray-900">
+                        Enquiry #{e.id}
+                      </span>
+                      <StatusBadge status={e.status} />
+                    </div>
+
+                    {e.business_name && (
+                      <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-gray-400" />
+                        {e.business_name}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 mt-2">
+                      {itemName && (
+                        e.product_id ? (
+                          <Link
+                            to={`/products/${e.product_id}`}
+                            className="flex items-center gap-1 font-medium text-gray-600 hover:text-gray-900 no-underline"
+                          >
+                            <ItemIcon className="w-3.5 h-3.5" /> {itemName}
+                          </Link>
+                        ) : e.service_id ? (
+                          <Link
+                            to={`/biz-services/${e.service_id}`}
+                            className="flex items-center gap-1 font-medium text-gray-600 hover:text-gray-900 no-underline"
+                          >
+                            <ItemIcon className="w-3.5 h-3.5" /> {itemName}
+                          </Link>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <ItemIcon className="w-3.5 h-3.5" /> {itemName}
+                          </span>
+                        )
+                      )}
+                      {e.quantity > 1 && (
+                        <span className="flex items-center gap-1">
+                          <Boxes className="w-3.5 h-3.5" /> {e.quantity} units
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        {e.created_at
+                          ? new Date(e.created_at).toLocaleDateString()
+                          : "—"}
+                      </span>
+                    </div>
+
+                    {e.message && (
+                      <p className="text-sm text-gray-600 mt-3 bg-gray-50 rounded-lg p-3 line-clamp-2">
+                        {e.message}
+                      </p>
+                    )}
+
+                    {(e.requirement || e.location) && (
+                      <div className="mt-2 space-y-1">
+                        {e.requirement && (
+                          <p className="text-xs text-gray-600">
+                            <span className="font-semibold text-gray-800">Requirement:</span>{" "}
+                            {e.requirement}
+                          </p>
+                        )}
+                        {e.location && (
+                          <p className="text-xs text-gray-600">
+                            <span className="font-semibold text-gray-800">Location:</span>{" "}
+                            {e.location}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-                    <span className="flex items-center gap-1">
-                      <Building2 className="w-3.5 h-3.5" /> Business #{e.profile_id}
-                    </span>
-                    {e.product_id && (
-                      <span className="flex items-center gap-1">
-                        <Package className="w-3.5 h-3.5" /> Product #{e.product_id}
-                      </span>
+                  {/* Once a seller has quoted, this is the only path to the
+                      price they offered — surface it right on the enquiry,
+                      and keep it reachable after the buyer has decided. */}
+                  {onViewQuotations &&
+                    ["QUOTED", "ACCEPTED", "REJECTED"].includes(e.status) && (
+                      <div className="flex-shrink-0">
+                        <button
+                          onClick={() => onViewQuotations(e.id)}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 bg-violet-50 text-violet-700 text-sm font-bold rounded-xl hover:bg-violet-100 transition-colors cursor-pointer border-none"
+                        >
+                          <FileText className="w-4 h-4" /> View Quotation
+                        </button>
+                      </div>
                     )}
-                    {e.service_id && (
-                      <span className="flex items-center gap-1">
-                        <Briefcase className="w-3.5 h-3.5" /> Service #{e.service_id}
-                      </span>
-                    )}
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      {e.created_at
-                        ? new Date(e.created_at).toLocaleDateString()
-                        : "—"}
-                    </span>
-                  </div>
-
-                  {e.message && (
-                    <p className="text-sm text-gray-600 mt-3 bg-gray-50 rounded-lg p-3 line-clamp-2">
-                      {e.message}
-                    </p>
-                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Load More */}
           {hasMore && (

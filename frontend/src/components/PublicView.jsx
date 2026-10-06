@@ -1,14 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import {
   Search, MapPin, ChevronRight, ChevronLeft, ArrowRight, Star, Phone,
   MessageCircle, ShieldCheck, Building2, ShoppingCart, Truck, Grid3X3,
   Send, Clock, Tag, Eye, X, CheckCircle2,
 } from "lucide-react";
-import { getCategoryTree, searchProfiles, getBanners, getNearbyProfilesPublic } from "../api";
+import { getCategoryTree, getBanners, getNearbyProfilesPublic, getFeaturedBusinesses, getAuthToken } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { buyerCreateRequirement, getCategories } from "../api";
-import { BestSellersSection, TrendingCategoriesSection, TrendingVideosSection } from "./HomeSections";
+import { BestSellersSection, TrendingCategoriesSection, TrendingProductsSection, TrendingVideosSection } from "./HomeSections";
 import OurServicesSection from "./OurServicesSection";
 
 const CATEGORY_ICONS = {
@@ -19,33 +19,30 @@ const CATEGORY_ICONS = {
 };
 
 const FALLBACK_SLIDES = [
-  { headline: "Find Products & Services Near You", subtitle: "Discover verified businesses, products, and services in your area.", cta: "Explore Now", ctaUrl: "/businesses", bg: "bg-gray-900" },
-  { headline: "Discover Local Businesses", subtitle: "Connect with trusted sellers and service providers in your neighborhood.", cta: "Browse Businesses", ctaUrl: "/businesses", bg: "bg-gray-800" },
-  { headline: "Connect with Buyers and Sellers", subtitle: "Post requirements, compare quotes, and grow your business.", cta: "Start Now", ctaUrl: "/login", bg: "bg-gray-900" },
+  { headline: "Find Products & Services Near You", subtitle: "Discover verified businesses, products, and services in your area.", cta: "Explore Now", ctaUrl: "/businesses", overlay: "#111827" },
+  { headline: "Discover Local Businesses", subtitle: "Connect with trusted sellers and service providers in your neighborhood.", cta: "Browse Businesses", ctaUrl: "/businesses", overlay: "#1f2937" },
+  { headline: "Connect with Buyers and Sellers", subtitle: "Post requirements, compare quotes, and grow your business.", cta: "Start Now", ctaUrl: "/login", overlay: "#111827" },
 ];
 
 function CategoriesSidebar() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [hovered, setHovered] = useState(null);
-  const hideTimer = useRef(null);
+  const [error, setError] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+  const { pathname } = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
-    getCategoryTree().then((d) => setCategories(d || [])).catch(() => {}).finally(() => setLoading(false));
+    let cancelled = false;
+    getCategoryTree()
+      .then((d) => { if (!cancelled) setCategories(Array.isArray(d) ? d : []); })
+      .catch(() => { if (!cancelled) setError(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => () => clearTimeout(hideTimer.current), []);
-
-  const handleEnter = (id) => {
-    clearTimeout(hideTimer.current);
-    setHovered(id);
-  };
-
-  const handleLeave = () => {
-    clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setHovered(null), 200);
-  };
+  // Slug of the category currently being viewed, so its row can be highlighted.
+  const activeSlug = pathname.split("/categories/")[1]?.split("/")[0] || null;
 
   if (loading) {
     return (
@@ -57,51 +54,112 @@ function CategoriesSidebar() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="w-full lg:w-60 flex-shrink-0">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
+          <p className="text-xs text-gray-500 mb-2">Could not load categories.</p>
+          <button
+            onClick={() => { setError(false); setLoading(true); getCategoryTree().then((d) => setCategories(Array.isArray(d) ? d : [])).catch(() => setError(true)).finally(() => setLoading(false)); }}
+            className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 cursor-pointer border-none"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full lg:w-60 flex-shrink-0">
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100">
           <h3 className="text-sm font-bold text-gray-900">Categories</h3>
         </div>
-        <nav className="max-h-[480px] overflow-y-auto">
-          {categories.map((cat) => {
-            const hasDropdown =
-              (cat.children && cat.children.length > 0) ||
-              (cat.subcategories && cat.subcategories.length > 0);
-            return (
-              <div key={cat.id} className="relative" onMouseEnter={() => setHovered(cat.id)} onMouseLeave={() => setHovered(null)}>
-                <button onClick={() => navigate(`/categories/${cat.slug}`)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors border-none bg-transparent cursor-pointer">
-                  <span className="text-base flex-shrink-0">{CATEGORY_ICONS[cat.icon] || "📁"}</span>
-                  <span className="text-sm text-gray-700 flex-1 truncate">{cat.name}</span>
-                  {hasDropdown && <ChevronRight className="w-3.5 h-3.5 text-gray-300" />}
-                </button>
-                {hovered === cat.id && hasDropdown && (
-                  <div className="absolute left-full top-0 ml-1 w-60 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-2 hidden lg:block">
-                    {cat.children && cat.children.length > 0 && (
-                      <div>
-                        <p className="px-4 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Categories</p>
-                        {cat.children.slice(0, 6).map((child) => (
-                          <button key={child.id} onClick={() => navigate(`/categories/${child.slug}`)} className="w-full text-left px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors border-none bg-transparent cursor-pointer">{child.name}</button>
-                        ))}
-                      </div>
+        {categories.length === 0 ? (
+          <p className="px-4 py-6 text-xs text-gray-500 text-center">
+            No categories available.
+          </p>
+        ) : (
+          <nav className="max-h-[480px] overflow-y-auto">
+            {categories.map((cat) => {
+              const children = cat.children || [];
+              const subs = cat.subcategories || [];
+              const hasDropdown = children.length > 0 || subs.length > 0;
+              const isExpanded = expanded === cat.id;
+              const isActive = activeSlug === cat.slug;
+              return (
+                <div key={cat.id} className="border-b border-gray-50 last:border-0">
+                  <div
+                    className={`flex items-center transition-colors ${
+                      isActive ? "bg-indigo-50" : "hover:bg-gray-50"
+                    }`}
+                  >
+                    <button
+                      onClick={() => navigate(`/categories/${cat.slug}`)}
+                      aria-current={isActive ? "page" : undefined}
+                      className="flex items-center gap-3 py-2.5 pl-4 pr-1 text-left bg-transparent border-none cursor-pointer flex-1 min-w-0"
+                    >
+                      <span className="text-base flex-shrink-0">{CATEGORY_ICONS[cat.icon] || "📁"}</span>
+                      <span className={`text-sm flex-1 truncate ${isActive ? "text-indigo-700 font-semibold" : "text-gray-700"}`}>
+                        {cat.name}
+                      </span>
+                    </button>
+                    {hasDropdown && (
+                      <button
+                        onClick={() => setExpanded(isExpanded ? null : cat.id)}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? "Hide" : "Show"} subcategories for ${cat.name}`}
+                        className="px-2.5 py-2.5 bg-transparent border-none cursor-pointer flex-shrink-0"
+                      >
+                        <ChevronRight
+                          className={`w-3.5 h-3.5 text-gray-400 transition-transform ${
+                            isExpanded ? "rotate-90" : ""
+                          }`}
+                        />
+                      </button>
                     )}
-                    {cat.subcategories && cat.subcategories.length > 0 && (
-                      <div>
-                        <p className="px-4 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Services</p>
-                        {cat.subcategories.slice(0, 8).map((sub) => (
-                          <button key={sub.id} onClick={() => navigate(`/categories/${cat.slug}/${sub.slug}`)} className="w-full text-left px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors border-none bg-transparent cursor-pointer">{sub.name}</button>
-                        ))}
-                      </div>
-                    )}
-                    <div className="border-t border-gray-100 mt-1 pt-1">
-                      <button onClick={() => navigate(`/categories/${cat.slug}`)} className="w-full text-left px-4 py-2 text-xs font-medium text-gray-400 hover:text-gray-700 border-none bg-transparent cursor-pointer">View all in {cat.name}</button>
-                    </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
+
+                  {/* Subcategories expand inline rather than in a flyout: an
+                      `absolute left-full` panel sat inside the `overflow-y-auto`
+                      nav above, and CSS forces the cross axis to clip whenever
+                      one axis scrolls, so the flyout was cut off and unusable. */}
+                  {isExpanded && hasDropdown && (
+                    <div className="pb-1.5 bg-gray-50/60">
+                      {children.length > 0 && (
+                        <div className="pt-1">
+                          {children.map((child) => (
+                            <button
+                              key={child.id}
+                              onClick={() => navigate(`/categories/${child.slug}`)}
+                              className="w-full text-left pl-11 pr-3 py-1.5 text-xs text-gray-600 hover:text-indigo-600 hover:bg-indigo-50/60 transition-colors border-none bg-transparent cursor-pointer truncate"
+                            >
+                              {child.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {subs.length > 0 && (
+                        <div className="pt-1 mt-1 border-t border-gray-200/70">
+                          {subs.map((sub) => (
+                            <button
+                              key={sub.id}
+                              onClick={() => navigate(`/categories/${cat.slug}/${sub.slug}`)}
+                              className="w-full text-left pl-11 pr-3 py-1.5 text-xs text-gray-500 hover:text-indigo-600 hover:bg-indigo-50/60 transition-colors border-none bg-transparent cursor-pointer truncate"
+                            >
+                              {sub.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+        )}
         <div className="border-t border-gray-100 px-4 py-2.5">
           <Link to="/categories" className="text-xs font-medium text-gray-500 hover:text-gray-900 no-underline">View All Categories</Link>
         </div>
@@ -117,11 +175,18 @@ function ImageCarousel() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    getBanners().then((data) => {
-      if (data && data.length > 0) {
-        setSlides(data.map((b) => ({ headline: b.title, subtitle: b.subtitle || "", cta: b.cta_text || "Learn More", ctaUrl: b.cta_url || "/businesses", bg: "bg-gray-900", image: b.image_url })));
-      }
-    }).catch(() => {});
+getBanners().then((data) => {
+        if (data && data.length > 0) {
+          setSlides(data.map((b) => ({
+            headline: b.title,
+            subtitle: b.subtitle || "",
+            cta: b.cta_text || "Learn More",
+            ctaUrl: b.cta_url || "/businesses",
+            overlay: b.gradient || "#111827",
+            image: b.image_url,
+          })));
+        }
+      }).catch(() => {});
   }, []);
 
   const next = useCallback(() => setCurrent((p) => (p + 1) % slides.length), [slides.length]);
@@ -138,7 +203,7 @@ function ImageCarousel() {
       {slides.map((slide, i) => (
         <div key={i} className={`absolute inset-0 transition-opacity duration-500 ${current === i ? "opacity-100 z-10" : "opacity-0 z-0"}`}>
           {slide.image && <img src={slide.image} alt="" className="absolute inset-0 w-full h-full object-cover" />}
-          <div className={`absolute inset-0 ${slide.bg || "bg-gray-900"}`} style={{ opacity: slide.image ? 0.75 : 1 }} />
+          <div className="absolute inset-0" style={{ background: slide.overlay || "#111827", opacity: slide.image ? 0.75 : 1 }} />
           <div className="relative z-10 h-full flex flex-col justify-center px-6 md:px-8">
             <h2 className="text-xl md:text-2xl font-extrabold text-white mb-2 max-w-md leading-tight">{slide.headline}</h2>
             <p className="text-sm text-gray-300 mb-4 max-w-sm leading-relaxed">{slide.subtitle}</p>
@@ -159,7 +224,7 @@ function ImageCarousel() {
 
 function BuyerSellerBanners() {
   const navigate = useNavigate();
-  const { isAuthenticated, isAdmin } = useAuth();
+  const { isAdmin } = useAuth();
   const [showReq, setShowReq] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", city: "", category_id: "" });
   const [saving, setSaving] = useState(false);
@@ -169,7 +234,7 @@ function BuyerSellerBanners() {
   useEffect(() => { getCategories().then((d) => setCats(d || [])).catch(() => {}); }, []);
 
   const handlePost = () => {
-    if (!isAuthenticated) return navigate("/login");
+    if (!getAuthToken()) return navigate("/login");
     if (isAdmin) return navigate("/admin/dashboard");
     setShowReq(true);
   };
@@ -267,8 +332,8 @@ function BusinessesNearYouSection() {
   const [usedGeo, setUsedGeo] = useState(false);
 
   useEffect(() => {
-    const fallback = () => searchProfiles({ page_size: 8 }).then((r) => setBusinesses(r.items || [])).catch(() => {}).finally(() => setLoading(false));
-    if (!navigator.geolocation) return fallback();
+    const fallback = () => getFeaturedBusinesses(8).then((r) => setBusinesses(Array.isArray(r) ? r : r?.items || [])).catch(() => setBusinesses([])).finally(() => setLoading(false));
+    if (!navigator.geolocation) { fallback(); return; }
     navigator.geolocation.getCurrentPosition(
       (pos) => { setUsedGeo(true); getNearbyProfilesPublic(pos.coords.latitude, pos.coords.longitude, 25, 1, 8).then((r) => setBusinesses(r.items || [])).catch(() => {}).finally(() => setLoading(false)); },
       () => fallback(),
@@ -383,6 +448,7 @@ export default function PublicView() {
       </section>
       <BestSellersSection />
       <TrendingCategoriesSection />
+      <TrendingProductsSection />
       <TrendingVideosSection />
       <OurServicesSection />
       <BusinessesNearYouSection />

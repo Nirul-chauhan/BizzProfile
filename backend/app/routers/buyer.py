@@ -5,7 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies.database import get_db_session
-from app.dependencies.auth import require_customer
+from app.dependencies.auth import (
+    require_customer,
+    require_buyer_or_admin,
+    require_buyer_or_seller_or_admin,
+    require_any_authenticated,
+)
 from app.models.user import User
 from app.models.product import Product, ProductStatus
 from app.models.biz_profile import BizProfile
@@ -21,9 +26,11 @@ from app.schemas.buyer import (
     BuyerRequirementResponse,
     BuyerEnquiryCreate,
     BuyerEnquiryResponse,
+    BuyerEnquiryListResponse,
     BuyerFavoriteCreate,
     BuyerFavoriteResponse,
     BuyerQuotationResponse,
+    BuyerQuotationListResponse,
     BuyerMessageCreate,
     BuyerMessageResponse,
 )
@@ -181,7 +188,7 @@ def delete_requirement(
 @router.post("/enquiries", response_model=BuyerEnquiryResponse, status_code=status.HTTP_201_CREATED)
 def create_enquiry(
     data: BuyerEnquiryCreate,
-    current_user: User = Depends(require_customer),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
@@ -191,11 +198,11 @@ def create_enquiry(
         _handle_buyer_error(e)
 
 
-@router.get("/enquiries")
+@router.get("/enquiries", response_model=BuyerEnquiryListResponse)
 def list_enquiries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(require_customer),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
@@ -208,7 +215,7 @@ def list_enquiries(
 @router.get("/enquiries/{enquiry_id}", response_model=BuyerEnquiryResponse)
 def get_enquiry(
     enquiry_id: int,
-    current_user: User = Depends(require_customer),
+    current_user: User = Depends(require_buyer_or_seller_or_admin),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
@@ -266,7 +273,7 @@ def remove_favorite(
 # 6. Quotations
 # ---------------------------------------------------------------------------
 
-@router.get("/quotations")
+@router.get("/quotations", response_model=BuyerQuotationListResponse)
 def list_quotations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

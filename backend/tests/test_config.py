@@ -64,10 +64,9 @@ class TestRequiredFields:
 
     def _make_settings(self, **env_overrides):
         from app.config import Settings
-        return Settings.model_validate(
-            os.environ,
-            _env_file=None,
-        )
+        # _env_file is a BaseSettings constructor argument; passing it to
+        # model_validate() raises a TypeError on Pydantic v2.
+        return Settings(_env_file=None)
 
     def test_database_url_required(self, set_env):
         set_env(**{k: v for k, v in REQUIRED_ENV.items() if k != "DATABASE_URL"})
@@ -156,19 +155,36 @@ class TestApiHealthEndpoint:
         assert "database" in data
         assert "status" in data["database"]
 
-    def test_api_health_db_error_when_unreachable(self, set_env):
-        set_env(
-            DATABASE_URL="postgresql://user:pass@localhost:1/nonexistent",
-            SECRET_KEY="test",
+    def test_api_health_db_error_when_unreachable(self, monkeypatch):
+        """Health endpoint must report a database error when the DB is down.
+
+        app.database.engine is created at import time, so relying on the
+        DATABASE_URL environment variable here would make the test depend on
+        which module happened to be imported first. Patch the engine directly.
+        """
+        from sqlalchemy import create_engine
+
+        import app.database as database
+
+        broken_engine = create_engine(
+            "postgresql://user:pass@localhost:1/nonexistent",
+            connect_args={"connect_timeout": 1},
+            pool_pre_ping=False,
         )
+        monkeypatch.setattr(database, "engine", broken_engine)
+
         from fastapi.testclient import TestClient
         from app.main import app
-        client = TestClient(app)
-        response = client.get("/api/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["database"]["status"] == "error"
-        assert "detail" in data["database"]
+
+        try:
+            client = TestClient(app)
+            response = client.get("/api/health")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["database"]["status"] == "error"
+            assert "detail" in data["database"]
+        finally:
+            broken_engine.dispose()
 
 
 class TestDatabaseModule:

@@ -1,11 +1,11 @@
 """Public services browsing router."""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, case
 from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies.database import get_db_session
-from app.models.service import BizService, ServiceStatus
+from app.models.service import BizService, ServiceStatus, ServiceApprovalStatus, ServiceApprovalStatus
 from app.models.biz_profile import BizProfile
 from app.models.category import Category, Subcategory
 
@@ -33,11 +33,44 @@ class ServiceCard(BaseModel):
     id: int
     name: str
     description: str | None
+    image_url: str | None = None
     price_min: float | None
     price_max: float | None
     price_unit: str | None
     is_trending: bool
     is_featured: bool
+    category: PublicCategoryInfo | None = None
+    subcategory: PublicSubcategoryInfo | None = None
+    business_name: str | None = None
+    business_slug: str | None = None
+    business_logo: str | None = None
+    business_city: str | None = None
+    is_verified: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceDetail(BaseModel):
+    id: int
+    slug: str | None = None
+    name: str
+    description: str | None
+    image_url: str | None = None
+    price_min: float | None
+    price_max: float | None
+    price_unit: str | None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    pincode: str | None = None
+    service_radius: float | None = None
+    profile_id: int
+    is_trending: bool
+    is_featured: bool
+    is_available: bool
     category: PublicCategoryInfo | None = None
     subcategory: PublicSubcategoryInfo | None = None
     business_name: str | None = None
@@ -55,6 +88,7 @@ def _serialize_service(svc: BizService) -> dict:
         "id": svc.id,
         "name": svc.name,
         "description": svc.description,
+        "image_url": svc.image_url,
         "price_min": svc.price_min,
         "price_max": svc.price_max,
         "price_unit": svc.price_unit,
@@ -83,6 +117,25 @@ def _serialize_service(svc: BizService) -> dict:
     }
 
 
+def _serialize_service_detail(svc: BizService) -> dict:
+    profile = svc.biz_profile
+    return {
+        **_serialize_service(svc),
+        "slug": svc.slug,
+        "image_url": svc.image_url,
+        "contact_phone": svc.contact_phone,
+        "contact_email": svc.contact_email,
+        "address": svc.address,
+        "city": svc.city,
+        "state": svc.state,
+        "country": svc.country,
+        "pincode": svc.pincode,
+        "service_radius": svc.service_radius,
+        "profile_id": svc.profile_id,
+        "is_available": svc.is_available,
+    }
+
+
 @router.get("", response_model=list[ServiceCard])
 def list_public_services(
     category_id: int | None = None,
@@ -108,6 +161,7 @@ def list_public_services(
         )
         .where(
             BizService.status == ServiceStatus.ACTIVE.value,
+            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
             BizService.is_available == True,
             BizProfile.is_active == True,
             BizProfile.is_public == True,
@@ -174,6 +228,7 @@ def list_trending_services(
         )
         .where(
             BizService.status == ServiceStatus.ACTIVE.value,
+            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
             BizService.is_available == True,
             BizService.is_trending == True,
             BizProfile.is_active == True,
@@ -202,6 +257,7 @@ def list_featured_services(
         )
         .where(
             BizService.status == ServiceStatus.ACTIVE.value,
+            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
             BizService.is_available == True,
             BizService.is_featured == True,
             BizProfile.is_active == True,
@@ -212,3 +268,38 @@ def list_featured_services(
     )
     results = db.execute(q).unique().scalars().all()
     return [_serialize_service(s) for s in results]
+
+
+@router.get("/{service_id}", response_model=ServiceDetail)
+def get_public_service(
+    service_id: int,
+    db: Session = Depends(get_db_session),
+):
+    """Public detail for a single seller-owned service.
+
+    Declared after the static sub-paths (/trending, /featured) so those are
+    matched first.
+    """
+    q = (
+        select(BizService)
+        .join(BizProfile, BizService.profile_id == BizProfile.id)
+        .outerjoin(Category, BizService.category_id == Category.id)
+        .options(
+            joinedload(BizService.biz_profile),
+            joinedload(BizService.category),
+            joinedload(BizService.subcategory),
+        )
+        .where(
+            BizService.id == service_id,
+            BizService.status == ServiceStatus.ACTIVE.value,
+            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
+            BizService.is_available == True,
+            BizProfile.is_active == True,
+            BizProfile.is_public == True,
+        )
+    )
+    svc = db.execute(q).unique().scalars().first()
+    if svc is None:
+        raise HTTPException(status_code=404, detail="Service not found.")
+    return _serialize_service_detail(svc)
+

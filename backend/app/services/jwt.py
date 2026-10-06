@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.config import get_settings
 
@@ -73,16 +73,15 @@ def decode_access_token(token: str) -> dict:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
+    except ExpiredSignatureError as e:
+        # ExpiredSignatureError is a JWTError subclass, so it must be caught
+        # before the generic handler below or callers never see
+        # TokenExpiredError.
+        raise TokenExpiredError("Token has expired.") from e
     except JWTError as e:
         raise InvalidTokenError(f"Invalid token: {e}") from e
 
     if "sub" not in payload:
         raise InvalidTokenError("Token missing 'sub' claim.")
-
-    exp = payload.get("exp")
-    if exp is not None:
-        expire_dt = datetime.fromtimestamp(exp, tz=timezone.utc)
-        if expire_dt < datetime.now(timezone.utc):
-            raise TokenExpiredError("Token has expired.")
 
     return payload

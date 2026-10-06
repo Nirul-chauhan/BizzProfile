@@ -8,6 +8,11 @@ from app.dependencies.database import get_db_session
 from app.models.biz_profile import BizProfile
 from app.models.category import Category, Subcategory
 from app.models.product import Product, ProductStatus
+from app.models.service import (
+    BizService,
+    ServiceApprovalStatus,
+    ServiceStatus,
+)
 from app.models.service_listing import (
     ListingApprovalStatus,
     ServiceCategory,
@@ -112,9 +117,10 @@ def search_all(
     limit: int = Query(12, ge=1, le=50, description="Max results per category"),
     db: Session = Depends(get_db_session),
 ):
-    """Unified keyword search across businesses, products, services, and categories."""
+    """Unified keyword search across every public surface on the marketplace."""
     keyword = (q or "").strip()
     pattern = f"%{keyword}%" if keyword else None
+    has_geo = latitude is not None and longitude is not None
 
     # ── Businesses (profiles) ───────────────────────────────────────────────
     repo = SearchRepository(db)
@@ -135,10 +141,13 @@ def search_all(
         businesses.append(data)
 
     # ── Products ────────────────────────────────────────────────────────────
+    # NOTE: Subcategory is joined explicitly. Referencing it only in the WHERE
+    # clause would produce a cartesian product and inflate every count.
     product_q = (
         select(Product)
         .join(BizProfile, Product.profile_id == BizProfile.id)
         .outerjoin(Category, Product.category_id == Category.id)
+        .outerjoin(Subcategory, Product.subcategory_id == Subcategory.id)
         .options(
             joinedload(Product.images),
             joinedload(Product.biz_profile),
@@ -169,28 +178,137 @@ def search_all(
         .scalars()
         .all()
     )
-    products = []
-    for p in product_rows:
+
+    def _serialize_product(p):
         images = sorted(p.images, key=lambda img: (not img.is_primary, img.sort_order))
         profile = p.biz_profile
-        products.append(
-            {
-                "id": p.id,
-                "name": p.name,
-                "slug": p.slug,
-                "description": p.description,
-                "price": p.price,
-                "price_unit": p.price_unit,
-                "category_name": p.category.name if p.category else None,
-                "primary_image": images[0].image_url if images else None,
-                "business_name": profile.business_name if profile else None,
-                "business_slug": profile.slug if profile else None,
-                "is_verified": profile.is_verified if profile else False,
-            }
-        )
+        return {
+            "id": p.id,
+            "name": p.name,
+            "slug": p.slug,
+            "description": p.description,
+            "price": p.price,
+            "price_unit": p.price_unit,
+            "category_name": p.category.name if p.category else None,
+            "primary_image": images[0].image_url if images else None,
+            "business_name": profile.business_name if profile else None,
+            "business_slug": profile.slug if profile else None,
+            "is_verified": profile.is_verified if profile else False,
+            "is_best_seller": p.is_best_seller,
+        }
 
-    # ── Services (service listings) ─────────────────────────────────────────
-    service_q = (
+    products = [_serialize_product(p) for p in product_rows]
+
+    # ── Best Sellers ────────────────────────────────────────────────────────
+    # Curated products, ranked by the admin's explicit order. Falls back to the
+    # top of the curated set so the group is never empty once curation starts.
+    best_q = (
+        select(Product)
+        .join(BizProfile, Product.profile_id == BizProfile.id)
+        .outerjoin(Category, Product.category_id == Category.id)
+        .outerjoin(Subcategory, Product.subcategory_id == Subcategory.id)
+        .options(
+            joinedload(Product.images),
+            joinedload(Product.biz_profile),
+            joinedload(Product.category),
+        )
+        .where(
+            Product.is_best_seller.is_(True),
+            Product.status == ProductStatus.ACTIVE.value,
+            Product.is_available.is_(True),
+            BizProfile.is_active.is_(True),
+            BizProfile.is_public.is_(True),
+        )
+    )
+    if pattern:
+        best_q = best_q.where(
+            or_(
+                Product.name.ilike(pattern),
+                Product.description.ilike(pattern),
+                Category.name.ilike(pattern),
+                Subcategory.name.ilike(pattern),
+            )
+        )
+    best_total = (
+        db.execute(select(func.count()).select_from(best_q.subquery())).scalar() or 0
+    )
+    best_rows = (
+        db.execute(
+            best_q.order_by(
+                Product.best_seller_order.asc(), Product.created_at.desc()
+            ).limit(limit)
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
+    best_sellers = [_serialize_product(p) for p in best_rows]
+
+    # ── Services ────────────────────────────────────────────────────────────
+    # Seller services (BizService) come first: those are the ones a visitor can
+    # actually enquire about. Directory listings (ServiceListing) follow.
+    biz_service_q = (
+        select(BizService)
+        .join(BizProfile, BizService.profile_id == BizProfile.id)
+        .outerjoin(Category, BizService.category_id == Category.id)
+        .outerjoin(Subcategory, BizService.subcategory_id == Subcategory.id)
+        .options(
+            joinedload(BizService.biz_profile),
+            joinedload(BizService.category),
+        )
+        .where(
+            BizService.status == ServiceStatus.ACTIVE.value,
+            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
+            BizService.is_available.is_(True),
+            BizService.is_published.is_(True),
+            BizProfile.is_active.is_(True),
+            BizProfile.is_public.is_(True),
+        )
+    )
+    if pattern:
+        biz_service_q = biz_service_q.where(
+            or_(
+                BizService.name.ilike(pattern),
+                BizService.description.ilike(pattern),
+                Category.name.ilike(pattern),
+                Subcategory.name.ilike(pattern),
+            )
+        )
+    biz_service_total = (
+        db.execute(
+            select(func.count()).select_from(biz_service_q.subquery())
+        ).scalar()
+        or 0
+    )
+    biz_service_rows = (
+        db.execute(
+            biz_service_q.order_by(BizService.is_featured.desc(), BizService.sort_order)
+            .limit(limit)
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
+    services = [
+        {
+            "id": s.id,
+            "source": "biz_service",
+            "name": s.name,
+            "slug": s.slug,
+            "description": s.description,
+            "image_url": s.image_url,
+            "price": s.price_min,
+            "price_unit": s.price_unit,
+            "category_name": s.category.name if s.category else None,
+            "provider_name": s.biz_profile.business_name if s.biz_profile else None,
+            "provider_slug": s.biz_profile.slug if s.biz_profile else None,
+            "city": s.city,
+            "is_featured": s.is_featured,
+        }
+        for s in biz_service_rows
+    ]
+
+    listing_q = (
         select(ServiceListing)
         .outerjoin(ServiceCategory, ServiceListing.category_id == ServiceCategory.id)
         .outerjoin(
@@ -207,7 +325,7 @@ def search_all(
         )
     )
     if pattern:
-        service_q = service_q.where(
+        listing_q = listing_q.where(
             or_(
                 ServiceListing.name.ilike(pattern),
                 ServiceListing.description.ilike(pattern),
@@ -215,22 +333,22 @@ def search_all(
                 ServiceSubcategory.name.ilike(pattern),
             )
         )
-    service_total = (
-        db.execute(select(func.count()).select_from(service_q.subquery())).scalar() or 0
+    listing_total = (
+        db.execute(select(func.count()).select_from(listing_q.subquery())).scalar() or 0
     )
-    service_rows = (
+    listing_rows = (
         db.execute(
-            service_q.order_by(ServiceListing.created_at.desc()).limit(limit)
+            listing_q.order_by(ServiceListing.created_at.desc()).limit(limit)
         )
         .unique()
         .scalars()
         .all()
     )
-    services = []
-    for s in service_rows:
+    for s in listing_rows:
         services.append(
             {
                 "id": s.id,
+                "source": "service_listing",
                 "name": s.name,
                 "slug": s.slug,
                 "description": s.description,
@@ -239,10 +357,12 @@ def search_all(
                 "price_unit": s.price_unit,
                 "category_name": s.category.name if s.category else None,
                 "provider_name": s.provider_name,
+                "provider_slug": None,
                 "city": s.city,
                 "is_featured": s.is_featured,
             }
         )
+    service_total = biz_service_total + listing_total
 
     # ── Categories ──────────────────────────────────────────────────────────
     category_q = select(Category).where(Category.is_active.is_(True))
@@ -256,23 +376,81 @@ def search_all(
         .scalars()
         .all()
     )
-    categories = []
-    for c in category_rows:
-        categories.append(
-            {
-                "id": c.id,
-                "name": c.name,
-                "slug": c.slug,
-                "icon": c.icon,
-                "logo_url": c.logo_url,
-                "description": c.description,
-            }
+    categories = [
+        {
+            "id": c.id,
+            "name": c.name,
+            "slug": c.slug,
+            "icon": c.icon,
+            "logo_url": c.logo_url,
+            "description": c.description,
+        }
+        for c in category_rows
+    ]
+
+    # ── Subcategories ───────────────────────────────────────────────────────
+    subcategory_q = (
+        select(Subcategory)
+        .join(Category, Subcategory.category_id == Category.id)
+        .options(joinedload(Subcategory.category))
+        .where(Subcategory.is_active.is_(True), Category.is_active.is_(True))
+    )
+    if pattern:
+        subcategory_q = subcategory_q.where(Subcategory.name.ilike(pattern))
+    subcategory_total = (
+        db.execute(
+            select(func.count()).select_from(subcategory_q.subquery())
+        ).scalar()
+        or 0
+    )
+    subcategory_rows = (
+        db.execute(subcategory_q.order_by(Subcategory.name).limit(limit))
+        .unique()
+        .scalars()
+        .all()
+    )
+    subcategories = [
+        {
+            "id": s.id,
+            "category_id": s.category_id,
+            "name": s.name,
+            "slug": s.slug,
+            "category_name": s.category.name if s.category else None,
+            "category_slug": s.category.slug if s.category else None,
+        }
+        for s in subcategory_rows
+    ]
+
+    # ── Nearby ──────────────────────────────────────────────────────────────
+    # Needs coordinates. Without them the group is simply absent rather than
+    # quietly falling back to "everything", which would be misleading.
+    nearby = {"items": [], "total": 0}
+    if has_geo:
+        radius = radius_km or 10
+        geo_repo = SearchRepository(db)
+        geo_results, geo_total = geo_repo.search(
+            q=keyword or None,
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius,
+            page=1,
+            page_size=limit,
         )
+        near_items = []
+        for result in geo_results:
+            data = _serialize_profile(result.profile)
+            data["distance_km"] = result.distance_km
+            data["category_name"] = result.category_name
+            near_items.append(data)
+        nearby = {"items": near_items, "total": geo_total}
 
     return {
         "query": keyword,
-        "businesses": {"items": businesses, "total": biz_total},
         "products": {"items": products, "total": product_total},
         "services": {"items": services, "total": service_total},
+        "businesses": {"items": businesses, "total": biz_total},
         "categories": {"items": categories, "total": category_total},
+        "subcategories": {"items": subcategories, "total": subcategory_total},
+        "best_sellers": {"items": best_sellers, "total": best_total},
+        "nearby": nearby,
     }

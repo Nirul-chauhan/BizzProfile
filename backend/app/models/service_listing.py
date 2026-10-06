@@ -1,9 +1,12 @@
 import enum
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import Integer, String, Text, Boolean, DateTime, ForeignKey, Float, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.biz_profile import BizProfile
 
 
 class ListingApprovalStatus(str, enum.Enum):
@@ -98,6 +101,9 @@ class ServiceListing(Base):
 
     category: Mapped["ServiceCategory"] = relationship("ServiceCategory", back_populates="services")
     subcategory: Mapped[Optional["ServiceSubcategory"]] = relationship("ServiceSubcategory", back_populates="services")
+    # Optional: a listing may be a standalone directory entry. When present, the
+    # listing inherits this business's location if it has no coordinates itself.
+    biz_profile: Mapped[Optional["BizProfile"]] = relationship("BizProfile")
     added_by_user: Mapped["User"] = relationship("User")
 
     __table_args__ = (

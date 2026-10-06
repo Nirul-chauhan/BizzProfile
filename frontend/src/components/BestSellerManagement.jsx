@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import {
   adminListProducts, adminToggleBestSeller, adminUpdateBestSellerOrder,
   adminListBestSellerRequests, adminReviewBestSellerRequest, getCategories,
+  adminListProductRequests, adminCountProductRequests,
+  adminApproveProduct, adminRejectProduct,
 } from "../api";
-import { Package, Star, Search, ChevronUp, ChevronDown, CheckCircle2, XCircle, Eye } from "lucide-react";
+import { Package, Star, Search, ChevronUp, ChevronDown, CheckCircle2, XCircle, Eye, ClipboardCheck } from "lucide-react";
 
 export default function BestSellerManagement() {
   const [products, setProducts] = useState([]);
@@ -24,6 +26,15 @@ export default function BestSellerManagement() {
   const [reviewingId, setReviewingId] = useState(null);
   const [reviewNote, setReviewNote] = useState("");
   const [activeTab, setActiveTab] = useState("products");
+
+  // Seller product approval queue
+  const [pending, setPending] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingPage, setPendingPage] = useState(1);
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [pendingActionId, setPendingActionId] = useState(null);
+  const [rejectingId, setRejectingId] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const loadProducts = async () => {
     setLoading(true);
@@ -57,9 +68,25 @@ export default function BestSellerManagement() {
     setReqLoading(false);
   };
 
+  const loadPending = async () => {
+    setPendingLoading(true);
+    try {
+      const [data, countData] = await Promise.all([
+        adminListProductRequests({ page: pendingPage, page_size: 20 }),
+        adminCountProductRequests(),
+      ]);
+      setPending(Array.isArray(data) ? data : []);
+      setPendingTotal(countData?.total || 0);
+    } catch (e) {
+      console.error(e);
+    }
+    setPendingLoading(false);
+  };
+
   useEffect(() => { loadProducts(); }, [page, filterBest, filterCat]);
   useEffect(() => { getCategories().then(d => setCategories(d || [])).catch(() => {}); }, []);
   useEffect(() => { if (activeTab === "requests") loadRequests(); }, [activeTab, reqFilter]);
+  useEffect(() => { if (activeTab === "approvals") loadPending(); }, [activeTab, pendingPage]);
 
   const handleSearch = () => { setPage(1); loadProducts(); };
 
@@ -104,12 +131,68 @@ export default function BestSellerManagement() {
     setTimeout(() => setMsg(""), 3000);
   };
 
+  // --- Seller product approval ---
+  const handlePromoteToggle = async (product) => {
+    setPendingActionId(product.id);
+    try {
+      await adminToggleBestSeller(product.id, !product.is_best_seller);
+      setMsg(
+        product.is_best_seller
+          ? "Removed from Best Sellers"
+          : "Marked as Best Seller — it will show in the Best Seller section once approved"
+      );
+      loadPending();
+    } catch (e) {
+      setMsg(e.message || "Failed to update Best Seller flag");
+    }
+    setPendingActionId(null);
+    setTimeout(() => setMsg(""), 4000);
+  };
+
+  const handleApprove = async (product) => {
+    setPendingActionId(product.id);
+    try {
+      await adminApproveProduct(product.id);
+      setMsg(
+        product.is_best_seller
+          ? "Approved and published to the Best Seller section"
+          : "Approved and published to the marketplace"
+      );
+      loadPending();
+      loadProducts();
+    } catch (e) {
+      setMsg(e.message || "Failed to approve");
+    }
+    setPendingActionId(null);
+    setTimeout(() => setMsg(""), 4000);
+  };
+
+  const handleReject = async (product) => {
+    setPendingActionId(product.id);
+    try {
+      await adminRejectProduct(product.id, rejectReason.trim() || null);
+      setMsg("Rejected — the seller can edit and resubmit");
+      setRejectingId(null);
+      setRejectReason("");
+      loadPending();
+      loadProducts();
+    } catch (e) {
+      setMsg(e.message || "Failed to reject");
+    }
+    setPendingActionId(null);
+    setTimeout(() => setMsg(""), 4000);
+  };
+
   return (
     <div>
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
         <button onClick={() => setActiveTab("products")} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors cursor-pointer border-none ${activeTab === "products" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 bg-transparent"}`}>
           <Package className="w-4 h-4 inline mr-1.5" />Manage Best Sellers
+        </button>
+        <button onClick={() => setActiveTab("approvals")} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors cursor-pointer border-none ${activeTab === "approvals" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 bg-transparent"}`}>
+          <ClipboardCheck className="w-4 h-4 inline mr-1.5" />Product Approvals
+          {pendingTotal > 0 && <span className="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-[10px] rounded-full">{pendingTotal}</span>}
         </button>
         <button onClick={() => setActiveTab("requests")} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors cursor-pointer border-none ${activeTab === "requests" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 bg-transparent"}`}>
           <Star className="w-4 h-4 inline mr-1.5" />Buyer Requests {requests.filter(r => r.status === "PENDING").length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-[10px] rounded-full">{requests.filter(r => r.status === "PENDING").length}</span>}
@@ -213,6 +296,123 @@ export default function BestSellerManagement() {
                   <button onClick={() => setPage(p => p + 1)} disabled={page * 20 >= total} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-40 cursor-pointer border-none bg-transparent">Next</button>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      ) : activeTab === "approvals" ? (
+        /* Seller product approval queue */
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            {pendingTotal} product{pendingTotal === 1 ? "" : "s"} awaiting review. Approving publishes a
+            product to the public marketplace. Marking one as a Best Seller is optional and decides whether
+            it also appears in the Best Seller section.
+          </p>
+
+          {pendingLoading ? (
+            <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-28 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+          ) : pending.length === 0 ? (
+            <div className="text-center py-12 bg-white border border-gray-200 rounded-xl">
+              <ClipboardCheck className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-gray-500 text-sm">No products awaiting approval.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pending.map((p) => (
+                <div key={p.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-start gap-4">
+                    {p.primary_image ? (
+                      <img src={p.primary_image} alt="" className="w-16 h-16 rounded-xl object-cover" />
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center"><Package className="w-6 h-6 text-gray-400" /></div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-bold text-gray-900">{p.name}</span>
+                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700">{p.approval_status}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-1">
+                        Business: {p.business?.business_name || "—"}
+                        {p.business?.city ? ` · ${p.business.city}` : ""}
+                        {p.submitted_at ? ` · Submitted ${new Date(p.submitted_at).toLocaleDateString()}` : ""}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                        <span>{p.price != null ? `₹${p.price.toLocaleString("en-IN")}` : "Price on request"}</span>
+                        <span>{p.category?.name || "Uncategorised"}</span>
+                        <span>{p.image_count} image{p.image_count === 1 ? "" : "s"}</span>
+                      </div>
+                      {p.description && (
+                        <p className="text-xs text-gray-600 bg-gray-50 p-2 rounded-lg mt-2">{p.description}</p>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handlePromoteToggle(p)}
+                        disabled={pendingActionId === p.id}
+                        title={p.is_best_seller ? "Remove from Best Seller section" : "Also publish to the Best Seller section"}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border-none cursor-pointer transition-colors disabled:opacity-50 ${
+                          p.is_best_seller
+                            ? "bg-orange-500 text-white hover:bg-orange-600"
+                            : "bg-gray-100 text-gray-600 hover:bg-orange-50 hover:text-orange-600"
+                        }`}
+                      >
+                        <Star className={`w-3.5 h-3.5 ${p.is_best_seller ? "fill-current" : ""}`} />
+                        {p.is_best_seller ? "Best Seller" : "Mark Best Seller"}
+                      </button>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleApprove(p)}
+                          disabled={pendingActionId === p.id}
+                          className="px-3 py-1.5 bg-emerald-500 text-white text-xs font-bold rounded-lg hover:bg-emerald-600 cursor-pointer border-none flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                        </button>
+                        <button
+                          onClick={() => { setRejectingId(rejectingId === p.id ? null : p.id); setRejectReason(""); }}
+                          disabled={pendingActionId === p.id}
+                          className="px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 cursor-pointer border-none flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <XCircle className="w-3.5 h-3.5" /> Reject
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {rejectingId === p.id && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        placeholder="Reason for rejection (optional — shown to the seller)"
+                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-orange-500 outline-none"
+                      />
+                      <button
+                        onClick={() => handleReject(p)}
+                        disabled={pendingActionId === p.id}
+                        className="px-3 py-2 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 cursor-pointer border-none disabled:opacity-50"
+                      >
+                        Confirm reject
+                      </button>
+                      <button
+                        onClick={() => setRejectingId(null)}
+                        className="px-3 py-2 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 cursor-pointer border-none"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {pendingTotal > 20 && (
+            <div className="flex items-center justify-between mt-4 px-4 py-3 bg-white border border-gray-200 rounded-xl">
+              <button onClick={() => setPendingPage(pp => Math.max(1, pp - 1))} disabled={pendingPage === 1} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-40 cursor-pointer border-none bg-transparent">Previous</button>
+              <span className="text-sm text-gray-500">Page {pendingPage} of {Math.ceil(pendingTotal / 20)}</span>
+              <button onClick={() => setPendingPage(pp => pp + 1)} disabled={pendingPage * 20 >= pendingTotal} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-40 cursor-pointer border-none bg-transparent">Next</button>
             </div>
           )}
         </div>

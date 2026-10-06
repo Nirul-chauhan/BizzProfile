@@ -224,6 +224,7 @@ class TestBizProfileSchemas:
         schema = BizProfileCreate(
             category_id=1,
             profile_type="COMPANY",
+            company_detail={},
             business_name="Test Co",
             slug="test-co",
         )
@@ -239,6 +240,7 @@ class TestBizProfileSchemas:
             profile_type="INDIVIDUAL",
             business_name="Full Profile",
             slug="full-profile",
+            individual_detail={},
             description="A full profile",
             phone="+919999999999",
             email="contact@test.com",
@@ -269,6 +271,7 @@ class TestBizProfileSchemas:
             BizProfileCreate(
                 category_id=1,
                 profile_type="COMPANY",
+                company_detail={},
                 business_name="",
                 slug="empty-name",
             )
@@ -278,6 +281,7 @@ class TestBizProfileSchemas:
             BizProfileCreate(
                 category_id=1,
                 profile_type="COMPANY",
+                company_detail={},
                 business_name="Has Name",
                 slug="",
             )
@@ -285,15 +289,17 @@ class TestBizProfileSchemas:
     def test_update_valid(self):
         schema = BizProfileUpdate(
             business_name="Updated Name",
-            profile_type="MSME",
+            city="Pune",
         )
         assert schema.business_name == "Updated Name"
-        assert schema.profile_type == "MSME"
+        assert schema.city == "Pune"
         assert schema.category_id is None
 
-    def test_update_invalid_profile_type(self):
+    def test_update_rejects_empty_business_name(self):
+        # profile_type is intentionally not part of BizProfileUpdate: a
+        # profile's type is fixed at creation time.
         with pytest.raises(ValidationError):
-            BizProfileUpdate(profile_type="BAD")
+            BizProfileUpdate(business_name="")
 
     def test_response_from_model(self, db, test_user, test_category):
         profile = BizProfile(
