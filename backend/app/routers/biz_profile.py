@@ -1,11 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.dependencies.auth import get_current_user, require_user
 from app.dependencies.database import get_db_session
 from app.models.user import User
 from app.schemas.biz_profile import BizProfileCreate, BizProfileResponse, BizProfileUpdate
+from app.schemas.seller import SellerBusinessHourCreate, SellerBusinessHourResponse
 from app.services.biz_profile import BizProfileError, BizProfileService
+
+IMAGE_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+IMAGE_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
@@ -35,6 +39,7 @@ def _serialize_profile(profile) -> dict:
         "is_public": profile.is_public,
         "is_verified": profile.is_verified,
         "is_active": profile.is_active,
+        "verification_status": profile.verification_status,
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
         "company_detail": None,
@@ -183,3 +188,133 @@ def delete_profile(
         svc.delete(profile_id=profile_id, user_id=current_user.id, is_admin=is_admin)
     except BizProfileError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Verification, logo/cover uploads & business hours (per business profile)
+# ---------------------------------------------------------------------------
+
+
+def _error_status(message: str, default: int = 400) -> int:
+    lowered = message.lower()
+    if "own" in lowered or "permission" in lowered:
+        return status.HTTP_403_FORBIDDEN
+    if "not found" in lowered:
+        return status.HTTP_404_NOT_FOUND
+    return default
+
+
+async def _save_image(file: UploadFile, folder: str) -> str:
+    if file.content_type not in IMAGE_ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type '{file.content_type}' is not allowed. Use JPEG, PNG, or WebP.",
+        )
+    content = await file.read()
+    if len(content) > IMAGE_MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds maximum of 5 MB.",
+        )
+    from app.services.storage import LocalStorageService
+
+    storage = LocalStorageService()
+    file_path = storage.save(content, file.filename or "image.jpg", folder=folder)
+    return storage.get_url(file_path)
+
+
+def _load_owned_or_admin(db: Session, profile_id: int, current_user: User):
+    svc = BizProfileService(db)
+    try:
+        profile = svc.get_by_id(profile_id)
+    except BizProfileError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    if profile.user_id != current_user.id and current_user.role.name != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only manage your own business profiles.",
+        )
+    return profile
+
+
+@router.post("/{profile_id}/submit-verification", response_model=BizProfileResponse)
+def submit_verification(
+    profile_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_user),
+):
+    """Seller asks an admin to review this business. Never sets VERIFIED."""
+    svc = BizProfileService(db)
+    try:
+        profile = svc.submit_for_verification(profile_id, current_user.id)
+    except BizProfileError as e:
+        raise HTTPException(status_code=_error_status(str(e)), detail=str(e))
+    return BizProfileResponse.model_validate(_serialize_profile(profile))
+
+
+@router.post("/{profile_id}/logo", response_model=BizProfileResponse)
+async def upload_profile_logo(
+    profile_id: int,
+    file: UploadFile,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_user),
+):
+    profile = _load_owned_or_admin(db, profile_id, current_user)
+    profile.logo_url = await _save_image(file, "logos")
+    db.commit()
+    db.refresh(profile)
+    return BizProfileResponse.model_validate(_serialize_profile(profile))
+
+
+@router.post("/{profile_id}/cover", response_model=BizProfileResponse)
+async def upload_profile_cover(
+    profile_id: int,
+    file: UploadFile,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_user),
+):
+    profile = _load_owned_or_admin(db, profile_id, current_user)
+    profile.cover_image_url = await _save_image(file, "covers")
+    db.commit()
+    db.refresh(profile)
+    return BizProfileResponse.model_validate(_serialize_profile(profile))
+
+
+@router.get(
+    "/{profile_id}/business-hours",
+    response_model=list[SellerBusinessHourResponse],
+)
+def list_business_hours(
+    profile_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_user),
+):
+    svc = BizProfileService(db)
+    try:
+        hours = svc.list_business_hours(profile_id, current_user.id)
+    except BizProfileError as e:
+        raise HTTPException(status_code=_error_status(str(e)), detail=str(e))
+    return [SellerBusinessHourResponse.model_validate(h) for h in hours]
+
+
+@router.post(
+    "/{profile_id}/business-hours/{day_of_week}",
+    response_model=SellerBusinessHourResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def upsert_business_hours(
+    profile_id: int,
+    day_of_week: int,
+    data: SellerBusinessHourCreate,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(require_user),
+):
+    svc = BizProfileService(db)
+    payload = data.model_dump(exclude={"day_of_week"})
+    try:
+        hour = svc.upsert_business_hours(
+            profile_id, current_user.id, day_of_week, payload
+        )
+    except BizProfileError as e:
+        raise HTTPException(status_code=_error_status(str(e)), detail=str(e))
+    return SellerBusinessHourResponse.model_validate(hour)

@@ -132,10 +132,46 @@ def update_me(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ):
-    current_user.full_name = request.full_name
-    current_user.city = request.city
-    current_user.state = request.state
-    current_user.country = request.country
+    """Update the authenticated user's personal profile.
+
+    Only fields actually present in the request body are applied, so a partial
+    payload (e.g. just ``full_name``) never wipes the other columns. The user
+    is always derived from the JWT — never from the request body.
+    """
+    provided = request.model_fields_set
+
+    if "full_name" in provided:
+        if not request.full_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Full name cannot be empty.",
+            )
+        current_user.full_name = request.full_name
+
+    if "mobile" in provided:
+        if request.mobile is None:
+            # Explicit empty value clears the number.
+            current_user.mobile = None
+            current_user.is_mobile_verified = False
+        elif request.mobile != current_user.mobile:
+            existing = db.execute(
+                select(User).where(
+                    User.mobile == request.mobile, User.id != current_user.id
+                )
+            ).scalars().first()
+            if existing is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Mobile number already registered.",
+                )
+            current_user.mobile = request.mobile
+            # A changed number must be re-verified before it counts as verified.
+            current_user.is_mobile_verified = False
+
+    for field in ("city", "state", "country", "address", "pincode"):
+        if field in provided:
+            setattr(current_user, field, getattr(request, field))
+
     db.commit()
     db.refresh(current_user)
     return UserResponse.model_validate(current_user)

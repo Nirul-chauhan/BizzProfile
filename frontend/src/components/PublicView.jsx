@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import {
-  Search, MapPin, ChevronRight, ChevronLeft, ArrowRight, Star, Phone,
-  MessageCircle, ShieldCheck, Building2, ShoppingCart, Truck, Grid3X3,
-  Send, Clock, Tag, Eye, X, CheckCircle2,
+  Search, MapPin, ChevronRight, ChevronLeft, ArrowRight, Phone,
+  ShieldCheck, Building2, ShoppingCart, Truck,
+  Clock, X, CheckCircle2,
 } from "lucide-react";
 import { getCategoryTree, getBanners, getNearbyProfilesPublic, getFeaturedBusinesses, getAuthToken } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { buyerCreateRequirement, getCategories } from "../api";
 import { BestSellersSection, TrendingCategoriesSection, TrendingProductsSection, TrendingVideosSection } from "./HomeSections";
 import OurServicesSection from "./OurServicesSection";
+import AppPromoSection from "./AppPromoSection";
+import SiteFooter from "./SiteFooter";
 
 const CATEGORY_ICONS = {
   heart: "❤️", zap: "⚡", droplets: "💧", hammer: "🔨", settings: "⚙️",
@@ -332,10 +334,10 @@ function BusinessesNearYouSection() {
   const [usedGeo, setUsedGeo] = useState(false);
 
   useEffect(() => {
-    const fallback = () => getFeaturedBusinesses(8).then((r) => setBusinesses(Array.isArray(r) ? r : r?.items || [])).catch(() => setBusinesses([])).finally(() => setLoading(false));
+    const fallback = () => getFeaturedBusinesses(12).then((r) => setBusinesses(Array.isArray(r) ? r : r?.items || [])).catch(() => setBusinesses([])).finally(() => setLoading(false));
     if (!navigator.geolocation) { fallback(); return; }
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setUsedGeo(true); getNearbyProfilesPublic(pos.coords.latitude, pos.coords.longitude, 25, 1, 8).then((r) => setBusinesses(r.items || [])).catch(() => {}).finally(() => setLoading(false)); },
+      (pos) => { setUsedGeo(true); getNearbyProfilesPublic(pos.coords.latitude, pos.coords.longitude, 25, 1, 12).then((r) => setBusinesses(r.items || [])).catch(() => {}).finally(() => setLoading(false)); },
       () => fallback(),
       { enableHighAccuracy: false, timeout: 5000 }
     );
@@ -349,11 +351,11 @@ function BusinessesNearYouSection() {
           <Link to="/businesses" className="text-sm font-medium text-gray-500 hover:text-gray-900 flex items-center gap-1 no-underline">View All <ArrowRight className="w-4 h-4" /></Link>
         </div>
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{[1,2,3,4].map(i => <div key={i} className="bg-white border border-gray-200 rounded-xl h-44 animate-pulse" />)}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">{[1,2,3,4,5,6].map(i => <div key={i} className="bg-white border border-gray-200 rounded-xl h-44 animate-pulse" />)}</div>
         ) : businesses.length === 0 ? (
           <div className="text-center py-12 bg-white border border-gray-200 rounded-xl"><Building2 className="w-8 h-8 text-gray-300 mx-auto mb-2" /><p className="text-gray-500 text-sm">No businesses found yet.</p></div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
             {businesses.map((biz) => (
               <Link key={biz.id} to={`/enduser/business/${biz.slug}`} className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-all no-underline group">
                 {biz.cover_image_url ? <img src={biz.cover_image_url} alt="" className="w-full h-24 object-cover" /> : <div className="w-full h-24 bg-gray-100 flex items-center justify-center"><Building2 className="w-6 h-6 text-gray-300" /></div>}
@@ -377,65 +379,6 @@ function BusinessesNearYouSection() {
   );
 }
 
-function PostRequirementCTA() {
-  return (
-    <section className="py-10 bg-gray-900">
-      <div className="max-w-4xl mx-auto px-4 text-center">
-        <h2 className="text-2xl md:text-3xl font-extrabold text-white mb-3">Can't find what you're looking for?</h2>
-        <p className="text-sm text-gray-400 mb-6 max-w-lg mx-auto">Post your requirement and let verified sellers come to you with the best quotes.</p>
-        <div className="flex items-center justify-center gap-4">
-          <Link to="/login" className="inline-flex items-center gap-2 px-6 py-3 bg-white text-gray-900 text-sm font-bold rounded-lg hover:bg-gray-100 transition-colors"><Send className="w-4 h-4" /> Post Requirement</Link>
-          <Link to="/businesses" className="inline-flex items-center gap-2 px-6 py-3 border border-gray-600 text-white text-sm font-bold rounded-lg hover:bg-white/10 transition-colors">Browse Businesses</Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ValueAddsSection() {
-  const features = [
-    { icon: ShieldCheck, title: "Verified Profiles", desc: "Every business profile is verified for authenticity and trust." },
-    { icon: MapPin, title: "Local Discovery", desc: "Find businesses and services in your neighborhood." },
-    { icon: MessageCircle, title: "Direct Communication", desc: "Connect directly with businesses through the platform." },
-    { icon: Star, title: "Ratings & Reviews", desc: "Make informed decisions based on real customer feedback." },
-    { icon: Tag, title: "Competitive Quotes", desc: "Compare quotes from multiple sellers for the best deal." },
-    { icon: Eye, title: "Transparent Listings", desc: "See complete business details, products, and services." },
-  ];
-  return (
-    <section className="py-8">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="text-center mb-8"><h2 className="text-lg font-extrabold text-gray-900">Why BizzProfiles?</h2><p className="text-sm text-gray-500 mt-1">Everything you need to find the right business partner</p></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {features.map((f, i) => (
-            <div key={i} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-all">
-              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center mb-3"><f.icon className="w-5 h-5 text-gray-600" /></div>
-              <h3 className="text-sm font-bold text-gray-900 mb-1">{f.title}</h3>
-              <p className="text-xs text-gray-500 leading-relaxed">{f.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="bg-gray-900 text-gray-400 py-10">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-          <div><div className="flex items-center gap-2 mb-3"><Grid3X3 className="w-5 h-5 text-gray-400" /><span className="text-sm font-bold text-white">BizzProfiles</span></div><p className="text-xs leading-relaxed">Your trusted B2B marketplace for finding verified businesses, products, and services.</p></div>
-          <div><h4 className="text-xs font-bold text-white mb-3 uppercase tracking-wider">Platform</h4><div className="space-y-2"><Link to="/businesses" className="block text-xs hover:text-white transition-colors">Browse Businesses</Link><Link to="/categories" className="block text-xs hover:text-white transition-colors">Categories</Link><Link to="/login" className="block text-xs hover:text-white transition-colors">Post Requirement</Link></div></div>
-          <div><h4 className="text-xs font-bold text-white mb-3 uppercase tracking-wider">Company</h4><div className="space-y-2"><Link to="/about" className="block text-xs hover:text-white transition-colors">About Us</Link><Link to="/contact" className="block text-xs hover:text-white transition-colors">Contact</Link><Link to="/privacy" className="block text-xs hover:text-white transition-colors">Privacy Policy</Link><Link to="/terms" className="block text-xs hover:text-white transition-colors">Terms</Link></div></div>
-          <div><h4 className="text-xs font-bold text-white mb-3 uppercase tracking-wider">For Business</h4><div className="space-y-2"><Link to="/auth/enduser" className="block text-xs hover:text-white transition-colors">Sell on BizzProfile</Link><Link to="/auth/customer" className="block text-xs hover:text-white transition-colors">Join as Buyer</Link></div></div>
-        </div>
-        <hr className="my-6 border-gray-800" />
-        <p className="text-xs text-center text-gray-500">&copy; {new Date().getFullYear()} BizzProfiles. All rights reserved.</p>
-      </div>
-    </footer>
-  );
-}
-
 export default function PublicView() {
   return (
     <div className="min-h-screen bg-gray-50">
@@ -452,9 +395,8 @@ export default function PublicView() {
       <TrendingVideosSection />
       <OurServicesSection />
       <BusinessesNearYouSection />
-      <PostRequirementCTA />
-      <ValueAddsSection />
-      <Footer />
+      <AppPromoSection />
+      <SiteFooter />
     </div>
   );
 }

@@ -144,6 +144,7 @@ class BizProfileResponse(BaseModel):
     is_active: bool
     is_featured: bool = False
     featured_order: int | None = None
+    verification_status: str = "UNVERIFIED"
     created_at: datetime
     updated_at: datetime
     company_detail: CompanyDetail | None = None
@@ -198,6 +199,7 @@ class PublicBizProfileResponse(BaseModel):
     logo_url: str | None
     cover_image_url: str | None
     is_verified: bool
+    verification_status: str = "UNVERIFIED"
     created_at: datetime
     category: PublicCategoryInfo
     subcategory: PublicSubcategoryInfo | None = None

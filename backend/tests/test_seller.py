@@ -1895,3 +1895,117 @@ class TestSellerDashboardAccuracy:
         resp = client.get("/api/seller/dashboard", headers=_auth_header(token))
         completion_full = resp.json()["profile_completion"]
         assert completion_full > completion_minimal
+
+    def test_dashboard_includes_total_businesses(self, client, db):
+        email = _seller_email()
+        _create_seller(db, email)
+        token = _register_and_login(client, email)
+        cat = _ensure_category(db, "BizCount", "bizcount")
+
+        _create_profile(client, token, cat.id)
+
+        resp = client.get("/api/seller/dashboard", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["total_businesses"] == 1
+
+
+# ===========================================================================
+# 18. Business logo upload / removal
+# ===========================================================================
+
+_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(64)
+
+
+class TestSellerProfileLogo:
+    def test_upload_logo(self, client, db):
+        email = _seller_email()
+        _create_seller(db, email)
+        token = _register_and_login(client, email)
+        cat = _ensure_category(db, "LogoBrand", "logobrand")
+        _create_profile(client, token, cat.id)
+
+        resp = client.post(
+            "/api/seller/profile/logo",
+            files={"file": ("logo.png", _PNG_BYTES, "image/png")},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        logo_url = resp.json()["logo_url"]
+        assert logo_url
+
+        # The logo must round-trip through the regular profile endpoint.
+        profile = client.get("/api/seller/profile", headers=_auth_header(token))
+        assert profile.json()["logo_url"] == logo_url
+
+    def test_remove_logo(self, client, db):
+        email = _seller_email()
+        _create_seller(db, email)
+        token = _register_and_login(client, email)
+        cat = _ensure_category(db, "LogoRemoval", "logoremoval")
+        _create_profile(client, token, cat.id)
+
+        client.post(
+            "/api/seller/profile/logo",
+            files={"file": ("logo.png", _PNG_BYTES, "image/png")},
+            headers=_auth_header(token),
+        )
+
+        resp = client.delete("/api/seller/profile/logo", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["logo_url"] is None
+
+    def test_upload_rejects_wrong_file_type(self, client, db):
+        email = _seller_email()
+        _create_seller(db, email)
+        token = _register_and_login(client, email)
+        cat = _ensure_category(db, "LogoType", "logotype")
+        _create_profile(client, token, cat.id)
+
+        resp = client.post(
+            "/api/seller/profile/logo",
+            files={"file": ("notes.txt", b"plain text", "text/plain")},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
+
+    def test_upload_requires_business_profile(self, client, db):
+        email = _seller_email()
+        _create_seller(db, email)
+        token = _register_and_login(client, email)
+
+        from pathlib import Path
+
+        logos_dir = Path("uploads/biz-logos")
+        before = set(logos_dir.glob("*")) if logos_dir.exists() else set()
+
+        resp = client.post(
+            "/api/seller/profile/logo",
+            files={"file": ("logo.png", _PNG_BYTES, "image/png")},
+            headers=_auth_header(token),
+        )
+        # Same convention as POST /api/seller/products without a profile.
+        assert resp.status_code == 400
+        assert "business profile" in resp.json()["detail"].lower()
+
+        # Nothing may be written to disk when the profile does not exist.
+        after = set(logos_dir.glob("*")) if logos_dir.exists() else set()
+        assert after == before
+
+    def test_buyer_cannot_upload_logo(self, client, db):
+        email = _buyer_email()
+        _create_buyer(db, email)
+        token = _register_and_login(client, email, role="BUYER")
+
+        resp = client.post(
+            "/api/seller/profile/logo",
+            files={"file": ("logo.png", _PNG_BYTES, "image/png")},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 403
+
+    def test_unauthenticated_cannot_upload_logo(self, client, db):
+        resp = client.post(
+            "/api/seller/profile/logo",
+            files={"file": ("logo.png", _PNG_BYTES, "image/png")},
+        )
+        assert resp.status_code in (401, 403)

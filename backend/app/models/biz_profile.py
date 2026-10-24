@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.verification import ProfileVerificationStatus
 
 
 class ProfileType(str, enum.Enum):
@@ -65,6 +66,11 @@ class BizProfile(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     featured_order: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    verification_status: Mapped[str] = mapped_column(
+        String(20),
+        default=ProfileVerificationStatus.UNVERIFIED.value,
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
@@ -78,6 +84,14 @@ class BizProfile(Base):
     user: Mapped["User"] = relationship("User", backref="biz_profiles")
     category: Mapped["Category"] = relationship("Category", backref="biz_profiles")
     subcategory: Mapped["Subcategory | None"] = relationship("Subcategory", backref="biz_profiles")
+
+    @property
+    def category_name(self) -> str | None:
+        return self.category.name if self.category else None
+
+    @property
+    def subcategory_name(self) -> str | None:
+        return self.subcategory.name if self.subcategory else None
 
     __mapper_args__ = {
         "polymorphic_on": "profile_type",

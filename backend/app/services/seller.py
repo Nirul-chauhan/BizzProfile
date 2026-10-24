@@ -177,6 +177,7 @@ class SellerService:
             "best_seller_products": 0,
             "total_services": 0,
             "active_services": 0,
+            "total_businesses": 0,
             "pending_approval_products": 0,
             "pending_approval_services": 0,
             "total_enquiries": 0,
@@ -189,6 +190,7 @@ class SellerService:
             "approved_promotional_videos": 0,
             "profile_completion": 0,
             "verification_status": "PENDING",
+            "recent_activity": [],
         }
 
         profile = self._get_profile_for_user_optional(user_id)
@@ -281,6 +283,7 @@ class SellerService:
             "best_seller_products": best_seller_products,
             "total_services": total_services,
             "active_services": active_services,
+            "total_businesses": len(profile_ids),
             "pending_approval_products": pending_approval_products,
             "pending_approval_services": pending_approval_services,
             "total_enquiries": total_enquiries,
@@ -295,7 +298,79 @@ class SellerService:
             "verification_status": (
                 "APPROVED" if profile.is_verified else "PENDING"
             ),
+            "recent_activity": self._recent_activity(profile_ids),
         }
+
+    def _recent_activity(self, profile_ids: list[int], limit: int = 6) -> list[dict]:
+        """Merge the seller's latest enquiries, products and services into a feed.
+
+        Every entry is a real row from the seller's own profiles, ordered by the
+        time it was created. Nothing is synthesised.
+        """
+        events: list[dict] = []
+
+        enquiries = (
+            self.db.execute(
+                select(Enquiry)
+                .where(Enquiry.profile_id.in_(profile_ids))
+                .order_by(Enquiry.created_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        for e in enquiries:
+            buyer = self.db.get(User, e.buyer_id)
+            who = buyer.full_name if buyer and buyer.full_name else "a buyer"
+            events.append(
+                {
+                    "type": "enquiry",
+                    "message": f"New enquiry received from {who}",
+                    "created_at": e.created_at,
+                }
+            )
+
+        products = (
+            self.db.execute(
+                select(Product)
+                .where(Product.profile_id.in_(profile_ids))
+                .order_by(Product.created_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        for p in products:
+            events.append(
+                {
+                    "type": "product",
+                    "message": f"Product '{p.name}' — {p.approval_status}",
+                    "created_at": p.created_at,
+                }
+            )
+
+        services = (
+            self.db.execute(
+                select(BizService)
+                .where(BizService.profile_id.in_(profile_ids))
+                .order_by(BizService.created_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        for s in services:
+            events.append(
+                {
+                    "type": "service",
+                    "message": f"Service '{s.name}' — {s.approval_status}",
+                    "created_at": s.created_at,
+                }
+            )
+
+        events = [ev for ev in events if ev["created_at"] is not None]
+        events.sort(key=lambda ev: ev["created_at"], reverse=True)
+        return events[:limit]
 
     def _profile_completion(self, profile: BizProfile) -> int:
         """Percentage (0-100) of the recommended profile fields that are filled."""
@@ -435,6 +510,14 @@ class SellerService:
         self.db.refresh(profile)
         return profile
 
+    def clear_profile_logo(self, user_id: int) -> BizProfile:
+        """Remove the business logo (sets logo_url back to NULL)."""
+        profile = self._get_profile_for_user(user_id)
+        profile.logo_url = None
+        self.db.commit()
+        self.db.refresh(profile)
+        return profile
+
     # -----------------------------------------------------------------------
     # Products
     # -----------------------------------------------------------------------
@@ -446,8 +529,15 @@ class SellerService:
         page_size: int = 20,
         approval_status: str | None = None,
         search: str | None = None,
+        profile_id: int | None = None,
     ) -> dict:
-        profile_ids = self._get_owned_profile_ids(user_id)
+        if profile_id is not None:
+            # Ownership is asserted, so a seller can never filter another
+            # seller's business id into view.
+            self._require_owned_profile(profile_id, user_id)
+            profile_ids = [profile_id]
+        else:
+            profile_ids = self._get_owned_profile_ids(user_id)
         offset = (page - 1) * page_size
 
         conditions = [Product.profile_id.in_(profile_ids)]
@@ -647,8 +737,13 @@ class SellerService:
         page_size: int = 20,
         approval_status: str | None = None,
         search: str | None = None,
+        profile_id: int | None = None,
     ) -> dict:
-        profile_ids = self._get_owned_profile_ids(user_id)
+        if profile_id is not None:
+            self._require_owned_profile(profile_id, user_id)
+            profile_ids = [profile_id]
+        else:
+            profile_ids = self._get_owned_profile_ids(user_id)
         offset = (page - 1) * page_size
 
         conditions = [BizService.profile_id.in_(profile_ids)]
@@ -711,6 +806,7 @@ class SellerService:
             name=data["name"],
             slug=slug,
             description=data.get("description"),
+            image_url=data.get("image_url"),
             price_min=data.get("price_min") or price,
             price_max=data.get("price_max"),
             price_unit=data.get("price_unit"),
@@ -728,8 +824,9 @@ class SellerService:
         return svc
 
     def update_service(self, user_id: int, service_id: int, data: dict) -> BizService:
+        # Owner edits are allowed even after approval: _resubmit() below moves
+        # the service back to PENDING and unpublishes it, so the admin re-reviews.
         svc = self.get_service(user_id, service_id)
-        self._assert_editable(svc.approval_status, "service")
 
         if "category_id" in data and data["category_id"] is not None:
             category = self.db.get(Category, data["category_id"])
@@ -825,8 +922,19 @@ class SellerService:
     # Enquiries
     # -----------------------------------------------------------------------
 
-    def list_enquiries(self, user_id: int, page: int = 1, page_size: int = 20, status: str | None = None) -> dict:
-        profile_ids = self._get_owned_profile_ids(user_id)
+    def list_enquiries(
+        self,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        status: str | None = None,
+        profile_id: int | None = None,
+    ) -> dict:
+        if profile_id is not None:
+            self._require_owned_profile(profile_id, user_id)
+            profile_ids = [profile_id]
+        else:
+            profile_ids = self._get_owned_profile_ids(user_id)
         offset = (page - 1) * page_size
 
         conditions = [Enquiry.profile_id.in_(profile_ids)]

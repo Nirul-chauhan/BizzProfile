@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, CheckCircle2 } from "lucide-react";
 import { buyerCreateEnquiry, getAuthToken } from "../api";
+import { saveEnquiryDraft } from "./enquiryDraft";
 
 /**
  * Reusable enquiry modal.
@@ -12,7 +13,7 @@ import { buyerCreateEnquiry, getAuthToken } from "../api";
  * Submits to POST /buyer/enquiries. The backend derives the seller from the
  * product/service, so only the profile_id + item id need to be sent.
  */
-export default function EnquiryFormModal({ open, target, onClose }) {
+export default function EnquiryFormModal({ open, target, onClose, restoreKey = null, initialValues = null }) {
   const navigate = useNavigate();
   const [quantity, setQuantity] = useState("1");
   const [requirement, setRequirement] = useState("");
@@ -21,6 +22,15 @@ export default function EnquiryFormModal({ open, target, onClose }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (open && initialValues && restoreKey) {
+      setQuantity(initialValues.quantity || "1");
+      setRequirement(initialValues.requirement || "");
+      setLocation(initialValues.location || "");
+      setMessage(initialValues.message || "");
+    }
+  }, [open, restoreKey, initialValues]);
 
   if (!open || !target) return null;
 
@@ -43,10 +53,10 @@ export default function EnquiryFormModal({ open, target, onClose }) {
   const handleSubmit = async () => {
     if (!message.trim()) return;
     // Check the token the request will actually use, not just the React state,
-    // so an expired session sends the buyer to login instead of a bare
-    // "Not authenticated" error.
+    // so an expired session (or a guest) is taken to login instead of hitting a
+    // bare "Not authenticated" error.
     if (!getAuthToken()) {
-      reset();
+      saveEnquiryDraft({ target, quantity, requirement, location, message });
       onClose && onClose();
       return navigate("/login", { state: { from: window.location.pathname } });
     }
@@ -57,7 +67,9 @@ export default function EnquiryFormModal({ open, target, onClose }) {
         profile_id: target.profile_id,
         ...(target.type === "service"
           ? { service_id: target.id }
-          : { product_id: target.id }),
+          : target.type === "product"
+            ? { product_id: target.id }
+            : {}),
         quantity: Math.max(1, parseInt(quantity, 10) || 1),
         requirement: requirement.trim() || undefined,
         location: location.trim() || undefined,

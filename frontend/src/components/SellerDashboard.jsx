@@ -43,6 +43,7 @@ import {
   Tag,
   MessageCircle,
   ShoppingBag,
+  Building2,
   ArrowUpRight,
   BarChart,
   Users,
@@ -55,6 +56,10 @@ import {
   Play,
 } from "lucide-react";
 import {
+  getMe,
+  updateProfile,
+  uploadProfilePic,
+  removeProfilePic,
   sellerGetDashboard,
   sellerGetProfile,
   sellerCreateProfile,
@@ -86,15 +91,24 @@ import {
   sellerGetBusinessHours,
   sellerUpsertBusinessHours,
   sellerGetReviews,
+  uploadDocument,
+  sellerUploadLogo,
+  sellerRemoveLogo,
   getCategories,
   getCategoryTree,
+  getMyProfiles,
 } from "../api";
+import { useAuth } from "../context/AuthContext";
 import SellerVideoManagement from "./SellerVideoManagement";
 import SellerServiceManagement from "./SellerServiceManagement";
 import SellerQuotations from "./SellerQuotations";
+import SellerPersonalProfile from "./SellerPersonalProfile";
+import SellerBusinesses from "./SellerBusinesses";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "personal-profile", label: "Personal Profile", icon: UserCircle },
+  { id: "businesses", label: "My Businesses", icon: Building2 },
   { id: "profile", label: "My Business", icon: UserCircle },
   { id: "products", label: "My Products", icon: Package },
   { id: "my-services", label: "My Services", icon: Briefcase },
@@ -177,6 +191,43 @@ function Message({ type, text }) {
   );
 }
 
+// A missing business profile is a normal state for new sellers, not an error.
+// The backend signals it either as a 404 or as a 400 with this message.
+function isNoProfileError(err) {
+  return (
+    err?.status === 404 ||
+    /do not have a business profile/i.test(err?.message || "")
+  );
+}
+
+function PageFooter({ page, total, pageSize = 20, onPage }) {
+  const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
+  if (!total || total <= pageSize) return null;
+  return (
+    <div className="flex items-center justify-between mt-4 px-1">
+      <span className="text-xs text-gray-500 font-medium">
+        Page {page} of {totalPages} &middot; {total} total
+      </span>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onPage(page - 1)}
+          disabled={page <= 1}
+          className="px-4 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        >
+          Previous
+        </button>
+        <button
+          onClick={() => onPage(page + 1)}
+          disabled={page >= totalPages}
+          className="px-4 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function EnquiryNotificationCard({ enquiry, onView, onDismiss }) {
   const item = enquiry.product_name || enquiry.service_name || "your listing";
   return (
@@ -224,11 +275,28 @@ function EnquiryNotificationCard({ enquiry, onView, onDismiss }) {
 export default function SellerDashboard() {
   const navigate = useNavigate();
   const { section } = useParams();
+  const { logout, refreshUser } = useAuth();
   const [activeSection, setActiveSection] = useState(section || "dashboard");
   const [user, setUser] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [sectionError, setSectionError] = useState("");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+
+  // Personal profile — always driven by GET/PUT /api/auth/me for the
+  // authenticated user (never by values baked into the JSX). A null field
+  // means "not edited yet", so the form displays the live user value until
+  // the seller actually types.
+  const [meForm, setMeForm] = useState({ full_name: null, mobile: null });
+  const [savingMe, setSavingMe] = useState(false);
+  const [meMsg, setMeMsg] = useState({ type: "", text: "" });
+  const [uploadingPic, setUploadingPic] = useState(false);
+  const picInputRef = useRef(null);
+
+  // Verification documents (submitted from Settings)
+  const [docForm, setDocForm] = useState({ type: "BUSINESS_REGISTRATION", file: null });
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const docInputRef = useRef(null);
 
   // Dashboard
   const [dashboardData, setDashboardData] = useState(null);
@@ -245,6 +313,7 @@ export default function SellerDashboard() {
       city: "",
       state: "",
       country: "India",
+      pincode: "",
       latitude: null,
       longitude: null,
       category_id: "",
@@ -256,6 +325,8 @@ export default function SellerDashboard() {
   const [socialLinks, setSocialLinks] = useState([]);
   const [newSocialPlatform, setNewSocialPlatform] = useState("");
   const [newSocialUrl, setNewSocialUrl] = useState("");
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef(null);
 
   // Products
   const [products, setProducts] = useState([]);
@@ -321,7 +392,19 @@ export default function SellerDashboard() {
   const [categories, setCategories] = useState([]);
   const [categoryTree, setCategoryTree] = useState([]);
 
-  // Auth
+  // Multi-business scope: "" means "all my businesses" (default), otherwise a
+  // specific profile id. Persisted so the choice survives navigation reloads.
+  const [activeProfileId, setActiveProfileId] = useState(() => {
+    try {
+      return localStorage.getItem("seller_active_profile") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [businessOptions, setBusinessOptions] = useState([]);
+
+  // Auth: seed from localStorage, then refresh from PostgreSQL via /auth/me
+  // so status, verification flags, photo and joined date are always real.
   useEffect(() => {
     const stored = localStorage.getItem("user");
     if (stored) {
@@ -329,10 +412,25 @@ export default function SellerDashboard() {
         setUser(JSON.parse(stored));
       } catch {
         navigate("/login");
+        return;
       }
     } else {
       navigate("/login");
+      return;
     }
+    let active = true;
+    getMe()
+      .then((fresh) => {
+        if (!active || !fresh) return;
+        setUser(fresh);
+        localStorage.setItem("user", JSON.stringify(fresh));
+      })
+      .catch(() => {
+        // Token problem: request() already dispatched the auth-expired event.
+      });
+    return () => {
+      active = false;
+    };
   }, [navigate]);
 
   // Sync section param
@@ -348,11 +446,30 @@ export default function SellerDashboard() {
     getCategoryTree().then(setCategoryTree).catch(() => {});
   }, []);
 
+  // Load the seller's businesses for the scope selector. Best-effort: the
+  // dashboard itself still works if this call fails.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    getMyProfiles()
+      .then((data) => {
+        if (!active) return;
+        const list = Array.isArray(data) ? data : data?.items || [];
+        setBusinessOptions(list);
+      })
+      .catch(() => {
+        if (active) setBusinessOptions([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
   // Load section data
   useEffect(() => {
     if (!user) return;
     loadSectionData();
-  }, [activeSection, user]);
+  }, [activeSection, user, activeProfileId]);
 
   // Keep the new-enquiry nav badge fresh regardless of the active section.
   useEffect(() => {
@@ -381,7 +498,7 @@ export default function SellerDashboard() {
     let active = true;
     const poll = async () => {
       try {
-        const data = await sellerListEnquiries(1, 20, "NEW");
+        const data = await sellerListEnquiries(1, 20, "NEW", activeProfileId || null);
         if (!active) return;
         const list = data?.items || [];
         setNewEnquiries(list);
@@ -404,7 +521,7 @@ export default function SellerDashboard() {
       active = false;
       clearInterval(timer);
     };
-  }, [user]);
+  }, [user, activeProfileId]);
 
   // Auto-dismiss the toast after a while.
   useEffect(() => {
@@ -415,6 +532,7 @@ export default function SellerDashboard() {
 
   const loadSectionData = async () => {
     setLoading(true);
+    setSectionError("");
     try {
       switch (activeSection) {
         case "dashboard":
@@ -444,12 +562,16 @@ export default function SellerDashboard() {
         case "settings":
           await loadBusinessHours();
           await loadDocuments();
+          // Profile powers the verification-document upload (documents belong
+          // to the business profile) and the verification status badge.
+          await loadProfile();
           break;
         default:
           break;
       }
     } catch (err) {
       console.error("Failed to load section:", err);
+      setSectionError(err?.message || "Something went wrong while loading this section.");
     } finally {
       setLoading(false);
     }
@@ -460,8 +582,9 @@ export default function SellerDashboard() {
     try {
       const data = await sellerGetDashboard();
       setDashboardData(data);
-    } catch {
+    } catch (err) {
       setDashboardData({});
+      setSectionError(err?.message || "Could not load dashboard statistics.");
     }
     // Load reviews separately
     try {
@@ -493,14 +616,18 @@ export default function SellerDashboard() {
         city: profileData?.city || "",
         state: profileData?.state || "",
             country: profileData?.country || "India",
+            pincode: profileData?.pincode || "",
             latitude: profileData?.latitude ?? null,
             longitude: profileData?.longitude ?? null,
             category_id: profileData?.category_id ?? "",
             subcategory_id: profileData?.subcategory_id ?? "",
           });
       setSocialLinks(linksData || []);
-    } catch {
+    } catch (err) {
       setProfile(null);
+      if (!isNoProfileError(err)) {
+        setSectionError(err?.message || "Could not load your business profile.");
+      }
     }
   };
 
@@ -588,24 +715,174 @@ export default function SellerDashboard() {
     }
   };
 
-  // ─── PRODUCTS ─────────────────────────────────────────────────────────────
-  const loadProducts = async (page = 1) => {
+  const handleUploadLogo = async (file) => {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setProfileMsg({ type: "error", text: "Use a JPEG, PNG or WebP image." });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setProfileMsg({ type: "error", text: "Logo must be 5 MB or smaller." });
+      return;
+    }
+    setUploadingLogo(true);
+    setProfileMsg({ type: "", text: "" });
     try {
-      const data = await sellerListProducts(page, 20, productFilter || null);
+      await sellerUploadLogo(file);
+      await loadProfile();
+      setProfileMsg({ type: "success", text: "Business logo updated!" });
+      setTimeout(() => setProfileMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setProfileMsg({ type: "error", text: err.message || "Upload failed" });
+    } finally {
+      setUploadingLogo(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    setUploadingLogo(true);
+    setProfileMsg({ type: "", text: "" });
+    try {
+      await sellerRemoveLogo();
+      await loadProfile();
+      setProfileMsg({ type: "success", text: "Business logo removed." });
+      setTimeout(() => setProfileMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setProfileMsg({ type: "error", text: err.message || "Could not remove logo" });
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  // ─── PERSONAL PROFILE (authenticated user) ────────────────────────────────
+  const persistUser = (fresh) => {
+    setUser(fresh);
+    try {
+      localStorage.setItem("user", JSON.stringify(fresh));
+    } catch {
+      // localStorage may be unavailable; in-memory state is still updated.
+    }
+    // Keep the AuthContext (global navbar) in sync without a manual reload.
+    refreshUser().catch(() => {});
+  };
+
+  const handleSaveMe = async (setMsg = setMeMsg) => {
+    const fullName = (meForm.full_name ?? user?.full_name ?? "").trim();
+    if (!fullName) {
+      setMsg({ type: "error", text: "Full name is required" });
+      return;
+    }
+    const mobile = (meForm.mobile ?? user?.mobile ?? "").trim();
+    if (mobile && !/^\+?[0-9][0-9 -]{6,18}[0-9]$/.test(mobile)) {
+      setMsg({ type: "error", text: "Enter a valid mobile number" });
+      return;
+    }
+    setSavingMe(true);
+    setMsg({ type: "", text: "" });
+    try {
+      const payload = { full_name: fullName };
+      // Only touch the mobile column when the seller actually edited it;
+      // an explicitly emptied field clears the number server-side.
+      if (meForm.mobile !== null) payload.mobile = mobile || null;
+      const fresh = await updateProfile(payload);
+      persistUser(fresh);
+      setMsg({ type: "success", text: "Personal profile updated!" });
+      setTimeout(() => setMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setMsg({ type: "error", text: err.message || "Failed to update personal profile" });
+    } finally {
+      setSavingMe(false);
+    }
+  };
+
+  const handleUploadPic = async (file) => {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setMeMsg({ type: "error", text: "Use a JPEG, PNG or WebP image." });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setMeMsg({ type: "error", text: "Image must be 5 MB or smaller." });
+      return;
+    }
+    setUploadingPic(true);
+    setMeMsg({ type: "", text: "" });
+    try {
+      const fresh = await uploadProfilePic(file);
+      persistUser(fresh);
+      setMeMsg({ type: "success", text: "Profile photo updated!" });
+      setTimeout(() => setMeMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setMeMsg({ type: "error", text: err.message || "Upload failed" });
+    } finally {
+      setUploadingPic(false);
+      if (picInputRef.current) picInputRef.current.value = "";
+    }
+  };
+
+  const handleRemovePic = async () => {
+    setUploadingPic(true);
+    setMeMsg({ type: "", text: "" });
+    try {
+      const fresh = await removeProfilePic();
+      persistUser(fresh);
+      setMeMsg({ type: "success", text: "Profile photo removed." });
+      setTimeout(() => setMeMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setMeMsg({ type: "error", text: err.message || "Could not remove photo" });
+    } finally {
+      setUploadingPic(false);
+    }
+  };
+
+  const handleUploadDocument = async () => {
+    if (!profile?.id) {
+      setSettingsMsg({ type: "error", text: "Create your business profile first." });
+      return;
+    }
+    if (!docForm.file) {
+      setSettingsMsg({ type: "error", text: "Choose a file to upload." });
+      return;
+    }
+    setUploadingDoc(true);
+    setSettingsMsg({ type: "", text: "" });
+    try {
+      await uploadDocument(profile.id, docForm.file, docForm.type);
+      setDocForm((f) => ({ ...f, file: null }));
+      if (docInputRef.current) docInputRef.current.value = "";
+      await loadDocuments();
+      setSettingsMsg({ type: "success", text: "Document submitted for verification." });
+      setTimeout(() => setSettingsMsg({ type: "", text: "" }), 3000);
+    } catch (err) {
+      setSettingsMsg({ type: "error", text: err.message || "Upload failed" });
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
+  // ─── PRODUCTS ─────────────────────────────────────────────────────────────
+  const loadProducts = async (page = 1, approvalStatus = productFilter) => {
+    try {
+      const data = await sellerListProducts(page, 20, approvalStatus || null, null, activeProfileId || null);
       const items = data?.items || data || [];
       setProducts(items);
       setProductTotal(data?.total || 0);
       setProductPage(page);
-      for (const p of items) {
-        try {
-          const imgs = await sellerGetProductImages(p.id);
-          setProductImages((prev) => ({ ...prev, [p.id]: imgs || [] }));
-        } catch {
-          setProductImages((prev) => ({ ...prev, [p.id]: [] }));
-        }
-      }
-    } catch {
+      // Fetch the per-product image lists in parallel (they are independent).
+      await Promise.all(
+        items.map(async (p) => {
+          try {
+            const imgs = await sellerGetProductImages(p.id);
+            setProductImages((prev) => ({ ...prev, [p.id]: imgs || [] }));
+          } catch {
+            setProductImages((prev) => ({ ...prev, [p.id]: [] }));
+          }
+        })
+      );
+    } catch (err) {
       setProducts([]);
+      setSectionError(err?.message || "Could not load your products.");
     }
   };
 
@@ -719,14 +996,15 @@ export default function SellerDashboard() {
   };
 
   // ─── ENQUIRIES ────────────────────────────────────────────────────────────
-  const loadEnquiries = async (page = 1) => {
+  const loadEnquiries = async (page = 1, status = enquiryFilter) => {
     try {
-      const data = await sellerListEnquiries(page, 20, enquiryFilter || null);
+      const data = await sellerListEnquiries(page, 20, status || null, activeProfileId || null);
       setEnquiries(data?.items || data || []);
       setEnquiryTotal(data?.total || 0);
       setEnquiryPage(page);
-    } catch {
+    } catch (err) {
       setEnquiries([]);
+      setSectionError(err?.message || "Could not load your enquiries.");
     }
   };
 
@@ -738,7 +1016,7 @@ export default function SellerDashboard() {
     setSelectedEnquiry(enquiry);
     setQuotationForm(quotationFormFor(enquiry));
     setActiveSection("enquiries");
-    loadEnquiries(1);
+    loadEnquiries(1, "");
   };
 
   const handleUpdateEnquiryStatus = async (id, status) => {
@@ -825,8 +1103,9 @@ export default function SellerDashboard() {
       setRequirements(data?.items || data || []);
       setReqTotal(data?.total || 0);
       setReqPage(page);
-    } catch {
+    } catch (err) {
       setRequirements([]);
+      setSectionError(err?.message || "Could not load requirements.");
     }
   };
 
@@ -834,39 +1113,63 @@ export default function SellerDashboard() {
     try {
       const data = await sellerGetRequirement(id);
       setSelectedRequirement(data);
-    } catch {}
+    } catch (err) {
+      setSectionError(err?.message || "Could not load that requirement.");
+    }
   };
 
   // ─── MESSAGES ─────────────────────────────────────────────────────────────
   const loadConversations = async () => {
     try {
       const data = await sellerGetConversations();
-      setConversations(data || []);
-    } catch {
+      const list = Array.isArray(data) ? data : data?.items || [];
+      setConversations(
+        list.map((c) => {
+          const partnerId = c.partner_id ?? c.user_id ?? c.id;
+          return {
+            ...c,
+            id: partnerId,
+            user_id: partnerId,
+            name: c.partner_name || c.name || "User",
+            last_message: c.last_message || "",
+            unread_count: c.unread_count || 0,
+          };
+        })
+      );
+    } catch (err) {
       setConversations([]);
+      setSectionError(err?.message || "Could not load your conversations.");
     }
   };
 
   const loadMessages = async (userId) => {
     try {
       const data = await sellerGetMessages(userId);
-      setMessages(data || []);
+      const list = Array.isArray(data) ? data : data?.items || [];
+      setMessages(list);
       setActiveConversation(userId);
       await sellerMarkRead(userId);
-    } catch {
+      setConversations((prev) =>
+        prev.map((c) =>
+          (c.user_id ?? c.id) === userId ? { ...c, unread_count: 0 } : c
+        )
+      );
+    } catch (err) {
       setMessages([]);
+      setSectionError(err?.message || "Could not load this conversation.");
     }
   };
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !activeConversation) return;
     setSendingMessage(true);
+    setSectionError("");
     try {
       await sellerSendMessage(activeConversation, newMessage);
       setNewMessage("");
       await loadMessages(activeConversation);
     } catch (err) {
-      console.error("Failed to send message:", err);
+      setSectionError(err?.message || "Message could not be sent.");
     } finally {
       setSendingMessage(false);
     }
@@ -877,8 +1180,9 @@ export default function SellerDashboard() {
     try {
       const data = await sellerGetBusinessHours();
       setBusinessHours(data || []);
-    } catch {
+    } catch (err) {
       setBusinessHours([]);
+      if (!isNoProfileError(err)) setSectionError(err?.message || "Could not load business hours.");
     }
   };
 
@@ -886,8 +1190,9 @@ export default function SellerDashboard() {
     try {
       const data = await sellerGetDocuments();
       setDocuments(Array.isArray(data) ? data : data.items || []);
-    } catch {
+    } catch (err) {
       setDocuments([]);
+      if (!isNoProfileError(err)) setSectionError(err?.message || "Could not load verification documents.");
     }
   };
 
@@ -908,8 +1213,7 @@ export default function SellerDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    logout();
     navigate("/");
   };
 
@@ -1067,6 +1371,29 @@ export default function SellerDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {businessOptions.length > 0 && (
+              <select
+                value={activeProfileId}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setActiveProfileId(value);
+                  try {
+                    localStorage.setItem("seller_active_profile", value);
+                  } catch {
+                    // localStorage may be unavailable; in-memory scope still applies.
+                  }
+                }}
+                title="Filter this dashboard by business"
+                className="hidden sm:block max-w-[220px] px-3 py-1.5 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 outline-none cursor-pointer"
+              >
+                <option value="">All Businesses ({businessOptions.length})</option>
+                {businessOptions.map((b) => (
+                  <option key={b.id} value={String(b.id)}>
+                    {b.business_name || `Business #${b.id}`}
+                  </option>
+                ))}
+              </select>
+            )}
             <div className="relative">
               <button
                 onClick={() => setShowProfileMenu(!showProfileMenu)}
@@ -1112,6 +1439,11 @@ export default function SellerDashboard() {
             <Spinner />
           ) : (
             <>
+              {sectionError && (
+                <div className="mb-4">
+                  <Message type="error" text={sectionError} />
+                </div>
+              )}
               {/* ═══════════════════ DASHBOARD ═══════════════════ */}
               {activeSection === "dashboard" && (
                 <div>
@@ -1125,6 +1457,7 @@ export default function SellerDashboard() {
                       { label: "Pending Enquiries", value: dashboardData?.pending_enquiries ?? 0, icon: Inbox, bg: "bg-amber-50", iconColor: "text-amber-500" },
                       { label: "Total Enquiries", value: dashboardData?.total_enquiries ?? 0, icon: Inbox, bg: "bg-amber-50", iconColor: "text-amber-600" },
                       { label: "Total Quotations", value: dashboardData?.total_quotations ?? 0, icon: FileText, bg: "bg-violet-50", iconColor: "text-violet-500" },
+                      { label: "Total Businesses", value: dashboardData?.total_businesses ?? 0, icon: Building2, bg: "bg-indigo-50", iconColor: "text-indigo-500" },
                       { label: "Promotional Videos", value: dashboardData?.promotional_videos ?? 0, icon: Play, bg: "bg-rose-50", iconColor: "text-rose-500" },
                     ].map((m) => {
                       const Icon = m.icon;
@@ -1229,6 +1562,180 @@ export default function SellerDashboard() {
               {/* ═══════════════════ PROFILE ═══════════════════ */}
               {activeSection === "profile" && (
                 <div className="max-w-2xl mx-auto">
+                  {/* ── Personal Profile: the authenticated user (JWT) ── */}
+                  <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden mb-6">
+                    <div className="p-6 border-b border-gray-200/60 bg-gradient-to-r from-blue-500 to-indigo-600">
+                      <h3 className="text-lg font-bold text-white">Personal Profile</h3>
+                      <p className="text-sm text-blue-100">Your account details as a seller</p>
+                    </div>
+                    <div className="p-6 space-y-5">
+                      <Message type={meMsg.type} text={meMsg.text} />
+
+                      {/* Photo + account status */}
+                      <div className="flex flex-wrap items-start gap-4">
+                        <div className="relative flex-shrink-0">
+                          {user?.profile_pic ? (
+                            <img
+                              src={user.profile_pic}
+                              alt=""
+                              className="w-16 h-16 rounded-2xl object-cover border-2 border-gray-200"
+                            />
+                          ) : (
+                            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center text-white font-extrabold text-lg">
+                              {(user?.full_name || "SE").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          {uploadingPic && (
+                            <span className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center">
+                              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2 min-w-0">
+                          <div className="flex flex-wrap gap-2">
+                            <label className="px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors cursor-pointer">
+                              <Camera className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
+                              {uploadingPic ? "Uploading..." : user?.profile_pic ? "Change photo" : "Add photo"}
+                              <input
+                                ref={picInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                className="hidden"
+                                disabled={uploadingPic}
+                                onChange={(e) => handleUploadPic(e.target.files?.[0])}
+                              />
+                            </label>
+                            {user?.profile_pic && (
+                              <button
+                                onClick={handleRemovePic}
+                                disabled={uploadingPic}
+                                className="px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100 transition-colors cursor-pointer border-none disabled:opacity-50"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                              user?.is_active ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+                            }`}>
+                              {user?.is_active ? "Active account" : "Inactive account"}
+                            </span>
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                              user?.is_email_verified ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                            }`}>
+                              <Mail className="w-3 h-3" />
+                              {user?.is_email_verified ? "Email verified" : "Email unverified"}
+                            </span>
+                            {user?.mobile && (
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                                user?.is_mobile_verified ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                              }`}>
+                                <Phone className="w-3 h-3" />
+                                {user?.is_mobile_verified ? "Mobile verified" : "Mobile unverified"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Business verification status — straight from the database */}
+                      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 p-4 ${
+                        profile?.is_verified
+                          ? "border-emerald-200 bg-emerald-50/60"
+                          : "border-amber-200 bg-amber-50/60"
+                      }`}>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {profile?.is_verified ? (
+                            <ShieldCheck className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                          ) : (
+                            <Clock className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <p className={`text-sm font-bold ${profile?.is_verified ? "text-emerald-800" : "text-amber-800"}`}>
+                              {profile?.is_verified ? "Verified" : "Unverified"}
+                            </p>
+                            <p className={`text-xs ${profile?.is_verified ? "text-emerald-600" : "text-amber-600"}`}>
+                              {profile?.is_verified
+                                ? "Your business has been verified by our team."
+                                : profile
+                                  ? "Submit your verification documents to get verified."
+                                  : "Create your business profile to start verification."}
+                            </p>
+                          </div>
+                        </div>
+                        {!profile?.is_verified && (
+                          <button
+                            onClick={() => navigateToSection("settings")}
+                            className="px-3.5 py-2 bg-white border border-amber-300 text-amber-700 text-xs font-bold rounded-lg hover:bg-amber-100 transition-colors cursor-pointer flex-shrink-0"
+                          >
+                            Submit documents
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Editable personal information */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Full Name *</label>
+                          <input
+                            type="text"
+                            value={meForm.full_name ?? user?.full_name ?? ""}
+                            onChange={(e) => setMeForm({ ...meForm, full_name: e.target.value })}
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900"
+                            placeholder="Your full name"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Mobile Number</label>
+                          <input
+                            type="tel"
+                            value={meForm.mobile ?? user?.mobile ?? ""}
+                            onChange={(e) => setMeForm({ ...meForm, mobile: e.target.value })}
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900"
+                            placeholder="e.g. 9876543210"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Email</label>
+                          <input
+                            type="email"
+                            value={user?.email || ""}
+                            readOnly
+                            className="w-full px-4 py-3 bg-gray-100 border-2 border-gray-200 rounded-xl text-gray-600 text-sm cursor-not-allowed"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Joined On</label>
+                          <input
+                            type="text"
+                            value={user?.created_at ? new Date(user.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                            readOnly
+                            className="w-full px-4 py-3 bg-gray-100 border-2 border-gray-200 rounded-xl text-gray-600 text-sm cursor-not-allowed"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Location</label>
+                          <input
+                            type="text"
+                            value={[user?.city, user?.state, user?.country].filter(Boolean).join(", ") || "—"}
+                            readOnly
+                            className="w-full px-4 py-3 bg-gray-100 border-2 border-gray-200 rounded-xl text-gray-600 text-sm cursor-not-allowed"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleSaveMe()}
+                        disabled={savingMe}
+                        className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-lg disabled:opacity-50 cursor-pointer border-none"
+                      >
+                        {savingMe ? "Saving..." : "Save Personal Profile"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ── Business Profile ── */}
                   <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden">
                     <div className="p-6 border-b border-gray-200/60 bg-gradient-to-r from-emerald-500 to-teal-600">
                       <h3 className="text-lg font-bold text-white">Business Profile</h3>
@@ -1366,16 +1873,67 @@ export default function SellerDashboard() {
                             placeholder="Country"
                           />
                         </div>
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Pincode</label>
+                          <input
+                            type="text"
+                            value={profileForm.pincode}
+                            onChange={(e) => setProfileForm({ ...profileForm, pincode: e.target.value })}
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-gray-900"
+                            placeholder="e.g. 400001"
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-sm font-bold text-gray-700 mb-2">Address</label>
-                        <input
-                          type="text"
-                          value={profileForm.address}
-                          onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })}
-                          className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-gray-900"
-                          placeholder="Full address"
-                        />
+                        <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Address</label>
+                          <input
+                            type="text"
+                            value={profileForm.address}
+                            onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })}
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-gray-900"
+                            placeholder="Full address"
+                          />
+                        </div>
+
+                      {/* Business logo */}
+                      <div className="flex items-center gap-4">
+                        {profile?.logo_url ? (
+                          <img
+                            src={profile.logo_url}
+                            alt=""
+                            className="w-16 h-16 rounded-2xl object-cover border-2 border-gray-200 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center text-white flex-shrink-0">
+                            <ImageIcon className="w-6 h-6" />
+                          </div>
+                        )}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-sm font-bold text-gray-700">Business Logo</span>
+                          <div className="flex flex-wrap gap-2">
+                            <label className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer">
+                              <Camera className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
+                              {uploadingLogo ? "Uploading..." : profile?.logo_url ? "Change logo" : "Upload logo"}
+                              <input
+                                ref={logoInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                className="hidden"
+                                disabled={uploadingLogo}
+                                onChange={(e) => handleUploadLogo(e.target.files?.[0])}
+                              />
+                            </label>
+                            {profile?.logo_url && (
+                              <button
+                                onClick={handleRemoveLogo}
+                                disabled={uploadingLogo}
+                                className="px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100 transition-colors cursor-pointer border-none disabled:opacity-50"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       {/* Business location - required for buyers to find you via "Nearby Me" */}
@@ -1520,7 +2078,7 @@ export default function SellerDashboard() {
                     <div className="flex items-center gap-2">
                       <select
                         value={productFilter}
-                        onChange={(e) => { setProductFilter(e.target.value); loadProducts(1); }}
+                        onChange={(e) => { const v = e.target.value; setProductFilter(v); loadProducts(1, v); }}
                         className="px-3 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
                       >
                         <option value="">All</option>
@@ -1795,6 +2353,7 @@ export default function SellerDashboard() {
                       </div>
                     </div>
                   )}
+                  <PageFooter page={productPage} total={productTotal} onPage={(p) => loadProducts(p)} />
                 </div>
               )}
 
@@ -1806,7 +2365,7 @@ export default function SellerDashboard() {
                     <div className="flex items-center gap-2">
                       <select
                         value={enquiryFilter}
-                        onChange={(e) => { setEnquiryFilter(e.target.value); loadEnquiries(1); }}
+                        onChange={(e) => { const v = e.target.value; setEnquiryFilter(v); loadEnquiries(1, v); }}
                         className="px-3 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
                       >
                         <option value="">All</option>
@@ -1865,6 +2424,7 @@ export default function SellerDashboard() {
                           </div>
                         )}
                       </div>
+                      <PageFooter page={enquiryPage} total={enquiryTotal} onPage={(p) => loadEnquiries(p)} />
                     </div>
 
                     {/* Enquiry Detail */}
@@ -2126,6 +2686,7 @@ export default function SellerDashboard() {
                       ))}
                     </div>
                   )}
+                  <PageFooter page={reqPage} total={reqTotal} onPage={(p) => loadRequirements(p)} />
 
                   {/* Requirement Detail Modal */}
                   {selectedRequirement && (
@@ -2396,7 +2957,7 @@ export default function SellerDashboard() {
                         />
                       </div>
                       <p className="text-xs text-gray-400 mt-2">
-                        {dashboardData?.verification_status === "verified" ? "Verified seller" : "Pending verification"}
+                        {dashboardData?.verification_status === "APPROVED" ? "Verified seller" : "Pending verification"}
                       </p>
                     </div>
                   </div>
@@ -2437,7 +2998,27 @@ export default function SellerDashboard() {
 
               {/* ═══════════════════ MY SERVICES ═══════════════════ */}
               {activeSection === "my-services" && (
-                <SellerServiceManagement />
+                <SellerServiceManagement profileId={activeProfileId || null} />
+              )}
+
+              {/* ═══════════════════ PERSONAL PROFILE ═══════════════════ */}
+              {activeSection === "personal-profile" && (
+                <SellerPersonalProfile user={user} onUserUpdate={persistUser} />
+              )}
+
+              {/* ═══════════════════ MY BUSINESSES ═══════════════════ */}
+              {activeSection === "businesses" && (
+                <SellerBusinesses
+                  onManage={(id) => {
+                    setActiveProfileId(id ? String(id) : "");
+                    try {
+                      localStorage.setItem("seller_active_profile", id ? String(id) : "");
+                    } catch {
+                      // localStorage may be unavailable; in-memory scope still applies.
+                    }
+                    navigateToSection("products");
+                  }}
+                />
               )}
 
               {/* ═══════════════════ SETTINGS ═══════════════════ */}
@@ -2455,7 +3036,7 @@ export default function SellerDashboard() {
                     </div>
                     <div className="divide-y divide-gray-200/60">
                       {DAYS.map((day) => {
-                        const hours = businessHours.find((h) => h.day_of_week === day);
+                        const hours = businessHours.find((h) => Number(h.day_of_week) === DAY_INDEX[day]);
                         const isEditing = editingHours === day;
                         return (
                           <div key={day} className="px-5 py-4 flex items-center justify-between">
@@ -2543,6 +3124,53 @@ export default function SellerDashboard() {
                       <p className="text-xs text-blue-100">Upload documents to verify your business</p>
                     </div>
                     <div className="p-5">
+                      {/* Submit a new verification document */}
+                      {profile ? (
+                        <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={docForm.type}
+                              onChange={(e) => setDocForm({ ...docForm, type: e.target.value })}
+                              className="px-3 py-2 bg-white border-2 border-gray-200 rounded-lg text-xs font-bold text-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none cursor-pointer"
+                            >
+                              <option value="BUSINESS_REGISTRATION">Business Registration</option>
+                              <option value="GST">GST</option>
+                              <option value="MSME">MSME</option>
+                              <option value="PAN">PAN</option>
+                              <option value="OTHER">Other</option>
+                            </select>
+                            <label className="px-3 py-2 bg-white border-2 border-gray-200 border-dashed rounded-lg text-xs font-bold text-gray-600 hover:border-blue-300 hover:text-blue-600 transition-colors cursor-pointer max-w-[220px] truncate">
+                              {docForm.file ? docForm.file.name : "Choose file"}
+                              <input
+                                ref={docInputRef}
+                                type="file"
+                                accept=".pdf,.doc,.docx,image/jpeg,image/png,image/webp"
+                                className="hidden"
+                                disabled={uploadingDoc}
+                                onChange={(e) => setDocForm((f) => ({ ...f, file: e.target.files?.[0] || null }))}
+                              />
+                            </label>
+                            <button
+                              onClick={handleUploadDocument}
+                              disabled={uploadingDoc || !docForm.file}
+                              className="px-4 py-2 bg-blue-500 text-white text-xs font-bold rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 cursor-pointer border-none"
+                            >
+                              {uploadingDoc ? "Uploading..." : "Upload"}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-gray-400 mt-2">PDF, JPG, PNG, WebP, DOC or DOCX — up to 10 MB. Documents are reviewed by our team.</p>
+                        </div>
+                      ) : (
+                        <div className="mb-4 p-3 bg-amber-50 rounded-xl border border-amber-200 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-amber-700">Create your business profile to submit documents.</p>
+                          <button
+                            onClick={() => navigateToSection("profile")}
+                            className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 text-xs font-bold rounded-lg hover:bg-amber-100 transition-colors cursor-pointer"
+                          >
+                            Go to My Business
+                          </button>
+                        </div>
+                      )}
                       {documents.length === 0 ? (
                         <div className="text-center py-6 text-gray-400">
                           <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -2586,9 +3214,9 @@ export default function SellerDashboard() {
                           <label className="block text-sm font-bold text-gray-700 mb-2">Full Name</label>
                           <input
                             type="text"
-                            value={user?.full_name || ""}
-                            readOnly
-                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm"
+                            value={meForm.full_name ?? user?.full_name ?? ""}
+                            onChange={(e) => setMeForm({ ...meForm, full_name: e.target.value })}
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm"
                           />
                         </div>
                         <div>
@@ -2597,28 +3225,37 @@ export default function SellerDashboard() {
                             type="email"
                             value={user?.email || ""}
                             readOnly
-                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm"
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm cursor-not-allowed"
                           />
                         </div>
                         <div>
                           <label className="block text-sm font-bold text-gray-700 mb-2">Role</label>
                           <input
                             type="text"
-                            value="Seller"
+                            value={user?.role?.name ? user.role.name.charAt(0) + user.role.name.slice(1).toLowerCase() : "Seller"}
                             readOnly
-                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm"
+                            className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl text-gray-900 text-sm cursor-not-allowed"
                           />
                         </div>
                         <div>
-                          <label className="block text-sm font-bold text-gray-700 mb-2">Phone</label>
+                          <label className="block text-sm font-bold text-gray-700 mb-2">Mobile</label>
                           <input
                             type="tel"
-                            value={profileForm.phone || ""}
-                            onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
+                            value={meForm.mobile ?? user?.mobile ?? ""}
+                            onChange={(e) => setMeForm({ ...meForm, mobile: e.target.value })}
                             className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm"
-                            placeholder="Phone number"
+                            placeholder="Mobile number"
                           />
                         </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => handleSaveMe(setSettingsMsg)}
+                          disabled={savingMe}
+                          className="px-5 py-2.5 bg-emerald-500 text-white text-sm font-bold rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50 cursor-pointer border-none"
+                        >
+                          {savingMe ? "Saving..." : "Save Changes"}
+                        </button>
                       </div>
 
                       {/* Business location: powers the "Nearby Me" results. */}
@@ -2692,7 +3329,7 @@ export default function SellerDashboard() {
                           </p>
                         )}
                       </div>
-                      <p className="text-xs text-gray-400">To change your name or email, please contact support.</p>
+                      <p className="text-xs text-gray-400">To change your email, please contact support.</p>
                     </div>
                   </div>
 

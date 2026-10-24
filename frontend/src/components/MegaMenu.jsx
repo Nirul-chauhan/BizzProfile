@@ -3,15 +3,18 @@ import { Link } from "react-router-dom";
 import { ChevronDown, Grid3X3, ChevronRight } from "lucide-react";
 import { getCategoryTree } from "../api";
 
+const VISIBLE_LIMIT = 7;
+
 export default function MegaMenu() {
   const [categories, setCategories] = useState([]);
   const [openCategory, setOpenCategory] = useState(null);
+  const [showAll, setShowAll] = useState(false);
   const closeTimer = useRef(null);
   const menuRef = useRef(null);
 
   useEffect(() => {
     getCategoryTree()
-      .then((data) => setCategories(data.slice(0, 10)))
+      .then((data) => setCategories(Array.isArray(data) ? data : data?.items || []))
       .catch(() => {});
   }, []);
 
@@ -39,12 +42,14 @@ export default function MegaMenu() {
   }, []);
 
   const activeCat = categories.find((c) => c.id === openCategory);
+  const hasMore = categories.length > VISIBLE_LIMIT;
+  const visibleCategories = showAll ? categories : categories.slice(0, VISIBLE_LIMIT);
 
   return (
     <div ref={menuRef} className="relative">
       {/* Desktop — category names directly in the bar */}
-      <nav className="hidden lg:flex items-center gap-0.5">
-        {categories.map((cat) => {
+      <nav className={`hidden lg:flex items-center gap-0.5 ${showAll ? "flex-wrap" : ""}`}>
+        {visibleCategories.map((cat) => {
           const hasDropdown =
             (cat.children && cat.children.length > 0) ||
             (cat.subcategories && cat.subcategories.length > 0);
@@ -74,12 +79,18 @@ export default function MegaMenu() {
             </div>
           );
         })}
-        <Link
-          to="/categories"
-          className="px-3 py-2 rounded-xl text-sm font-medium text-gray-500 hover:text-blue-600 hover:bg-white/70 transition-all no-underline whitespace-nowrap"
-        >
-          All Categories
-        </Link>
+        {hasMore && (
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-semibold text-blue-600 hover:bg-white/70 transition-all whitespace-nowrap cursor-pointer border-none bg-transparent"
+            aria-expanded={showAll}
+          >
+            {showAll ? "See Less" : "See More"}
+            <ChevronDown
+              className={`w-3 h-3 transition-transform ${showAll ? "rotate-180" : ""}`}
+            />
+          </button>
+        )}
       </nav>
 
       {/* Desktop Dropdown Panel */}

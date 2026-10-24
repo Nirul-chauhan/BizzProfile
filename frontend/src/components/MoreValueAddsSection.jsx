@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, createElement } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
@@ -8,9 +8,27 @@ import {
   Crown,
   Network,
 } from "lucide-react";
-import { getMoreValueAdds } from "../api";
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+const LIST_URL = `${API_BASE}/api/public/more-value-adds`;
+
+// Representative icons for each card. The database can pin one by name; cards
+// without a usable icon fall back to the same set by position.
 const FALLBACK_ICONS = [CalendarDays, Target, Globe2, Crown, Network];
+const ICON_MAP = {
+  calendardays: CalendarDays,
+  calendar: CalendarDays,
+  target: Target,
+  globe: Globe2,
+  globe2: Globe2,
+  crown: Crown,
+  network: Network,
+};
+
+function pickIcon(item, index) {
+  const key = (item.icon || "").trim().toLowerCase();
+  return ICON_MAP[key] || FALLBACK_ICONS[index % FALLBACK_ICONS.length];
+}
 
 /**
  * Destination for each "More Value Adds" card.
@@ -47,63 +65,59 @@ function resolveDestination(item) {
 
 function CardSkeleton() {
   return (
-    <div className="h-full min-h-[212px] rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 h-11 w-11 animate-pulse rounded-xl bg-gray-100" />
+    <div className="flex h-full min-h-[196px] flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 h-10 w-10 animate-pulse rounded-lg bg-gray-100" />
       <div className="mb-2 h-4 w-4/5 animate-pulse rounded bg-gray-200" />
       <div className="mb-1.5 h-3 w-full animate-pulse rounded bg-gray-200" />
-      <div className="mb-4 h-3 w-3/5 animate-pulse rounded bg-gray-200" />
-      <div className="h-3.5 w-24 animate-pulse rounded bg-gray-200" />
+      <div className="h-3 w-3/5 animate-pulse rounded bg-gray-200" />
+      <div className="mt-auto h-3.5 w-28 animate-pulse rounded bg-gray-200 pt-4" />
     </div>
   );
 }
 
 function ValueAddCard({ item, index }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const Icon = FALLBACK_ICONS[index % FALLBACK_ICONS.length];
+  const Icon = pickIcon(item, index);
 
   const label = item.button_text?.trim() || "Learn More";
   const destination = resolveDestination(item);
 
   const surface =
-    "group relative flex h-full min-h-[212px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-orange-200 hover:shadow-lg hover:shadow-orange-100/60";
+    "group relative flex h-full min-h-[196px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md hover:shadow-orange-100/60";
 
   const body = (
     <>
-      {/* Decorative wash, kept behind the content. */}
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-orange-50"
-      />
-
-      {/* Real image when the admin uploaded one, otherwise a decorative icon. */}
-      <span className="relative z-10 mb-3 inline-flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-orange-50">
+      {/* Representative icon: uploaded image when available, else the lucide icon. */}
+      <span className="mb-3 inline-flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-orange-50">
         {item.image_url && !imgFailed ? (
           <img
             src={item.image_url}
             alt=""
             aria-hidden="true"
             onError={() => setImgFailed(true)}
-            className="h-7 w-7 object-contain transition-transform duration-300 group-hover:scale-110"
+            className="h-6 w-6 object-contain"
           />
         ) : (
-          <Icon className="h-5 w-5 text-orange-500" aria-hidden="true" />
+          createElement(Icon, {
+            className: "h-5 w-5 text-orange-500",
+            "aria-hidden": true,
+          })
         )}
       </span>
 
-      <h3 className="relative z-10 mb-1.5 text-[15px] font-bold leading-snug text-gray-900 transition-colors duration-300 group-hover:text-orange-700">
+      <h3 className="mb-1.5 text-[15px] font-bold leading-snug text-gray-900">
         {item.title}
       </h3>
 
       {item.description && (
-        <p className="relative z-10 mb-4 line-clamp-2 text-[13px] leading-relaxed text-gray-600">
+        <p className="mb-4 line-clamp-2 text-[13px] leading-relaxed text-gray-500">
           {item.description}
         </p>
       )}
 
-      {/* `mt-auto` keeps the CTA on the baseline of every card in the row, so
-          titles and descriptions of differing length still line up. */}
-      <span className="relative z-10 mt-auto inline-flex w-fit items-center gap-1 text-[13px] font-bold text-orange-600 transition-colors group-hover:text-orange-700">
-        {label}
+      {/* `mt-auto` pins the CTA to the bottom of every card in the row. */}
+      <span className="mt-auto inline-flex w-fit items-center gap-1 text-[13px] font-bold text-orange-600 transition-colors group-hover:text-orange-700">
+        {label}{" "}
         <ArrowRight className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-1" />
       </span>
     </>
@@ -135,37 +149,47 @@ export default function MoreValueAddsSection() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
 
     (async () => {
       try {
-        const data = await getMoreValueAdds();
-        if (cancelled) return;
-        // The backend already returns active rows ordered by display_order.
-        setItems(Array.isArray(data) ? data : data?.items ?? []);
+        const res = await fetch(LIST_URL, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (controller.signal.aborted) return;
+        setItems(Array.isArray(data) ? data : []);
       } catch (e) {
-        if (cancelled) return;
+        if (e?.name === "AbortError") return;
         console.error("More Value Adds: failed to load", e);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, []);
 
-  // No items (or a failed load) means no orphan heading on the homepage.
-  if (!loading && items.length === 0) return null;
+  // Fully data-driven from PostgreSQL via FastAPI; the section only renders
+  // when there are active rows to show.
+  if (loading) {
+    return (
+      <section className="bg-white py-10">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <h2 className="mb-1.5 text-2xl font-bold tracking-tight text-gray-900">
+            More Value Adds
+          </h2>
+          <div className="mb-6 h-1 w-12 rounded-full bg-gradient-to-r from-orange-500 to-amber-400" />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+            {[...Array(5)].map((_, i) => (
+              <CardSkeleton key={i} />
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
-  // One horizontal row at every breakpoint. Cards are sized so exactly 5 fit
-  // on desktop; anything beyond that overflows into the same scroll axis rather
-  // than wrapping onto a second row.
-  const rowClasses =
-    "-mx-4 flex snap-x snap-mandatory items-stretch gap-4 overflow-x-auto px-4 pb-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0 sm:pb-0";
-  const cardBasis =
-    "w-[230px] shrink-0 snap-start sm:w-[calc((100%-1rem)/2)] lg:w-[calc((100%-4*1rem)/5)]";
+  if (items.length === 0) return null;
 
   return (
     <section className="bg-white py-10">
@@ -175,23 +199,11 @@ export default function MoreValueAddsSection() {
         </h2>
         <div className="mb-6 h-1 w-12 rounded-full bg-gradient-to-r from-orange-500 to-amber-400" />
 
-        {loading ? (
-          <div className={rowClasses}>
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className={cardBasis}>
-                <CardSkeleton />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className={rowClasses}>
-            {items.map((item, i) => (
-              <div key={item.id} className={cardBasis}>
-                <ValueAddCard item={item} index={i} />
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+          {items.map((item, i) => (
+            <ValueAddCard key={item.id} item={item} index={i} />
+          ))}
+        </div>
       </div>
     </section>
   );

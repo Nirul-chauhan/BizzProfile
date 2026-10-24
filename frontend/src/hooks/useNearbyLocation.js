@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 const STORAGE_KEY = "bp_user_location";
 
@@ -46,48 +46,33 @@ export function useNearbyLocation() {
     return entry;
   }, []);
 
-  // Detect on first mount only when nothing is stored yet.
-  useEffect(() => {
-    if (location) return;
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setError("Geolocation is not supported by this browser.");
-      return;
-    }
-    setStatus("locating");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => store(pos.coords.latitude, pos.coords.longitude),
-      (err) => {
-        setStatus("error");
-        if (err.code === err.PERMISSION_DENIED) {
-          setError(
-            "Location permission denied. Enable it in your browser, or search by area name instead."
-          );
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          setError("Could not determine your location. Please try again.");
-        } else {
-          setError("Location request timed out. Please try again.");
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
-    );
-  }, [location, store]);
+  // Do not auto-detect on mount; require explicit user action as per requirements
 
   const refresh = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       setError("Geolocation is not supported by this browser.");
+      setStatus("error");
       return;
     }
     setStatus("locating");
     setError("");
     navigator.geolocation.getCurrentPosition(
       (pos) => store(pos.coords.latitude, pos.coords.longitude),
-      () => {
+      (err) => {
         setStatus("error");
-        setError("Could not get your location. Please try again.");
+        if (err.code === err.PERMISSION_DENIED) {
+          setError("Location access was denied. Please allow location access or search using another location.");
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          setError("Location unavailable. Please try again.");
+        } else {
+          setError("Unable to find nearby results. Please try again.");
+        }
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   }, [store]);
+
+  const requestLocation = refresh;
 
   const clear = useCallback(() => {
     try {
@@ -99,7 +84,7 @@ export function useNearbyLocation() {
     setStatus("idle");
   }, []);
 
-  return { location, status, error, refresh, clear, setLocation: store };
+  return { location, status, error, refresh, requestLocation, clear, setLocation: store };
 }
 
 export default useNearbyLocation;

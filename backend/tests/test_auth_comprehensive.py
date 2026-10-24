@@ -565,3 +565,116 @@ class TestMeEndpoint:
             headers={"Authorization": "Bearer fake-token"},
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 11. Partial personal-profile update (PUT /api/auth/me)
+# ---------------------------------------------------------------------------
+
+class TestUpdateMe:
+    def _auth(self, client, prefix):
+        email = _next_email(prefix)
+        _register(client, email, "SELLER")
+        login_resp = _login(client, email)
+        token = login_resp.json()["access_token"]
+        return email, {"Authorization": f"Bearer {token}"}
+
+    def test_full_update_sets_location_fields(self, client):
+        _, headers = self._auth(client, "updfull")
+        resp = client.put(
+            "/api/auth/me",
+            json={
+                "full_name": "Updated Name",
+                "city": "Pune",
+                "state": "MH",
+                "country": "India",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["full_name"] == "Updated Name"
+        assert data["city"] == "Pune"
+
+    def test_partial_update_preserves_omitted_fields(self, client):
+        _, headers = self._auth(client, "updpart")
+        client.put(
+            "/api/auth/me",
+            json={"full_name": "Stage One", "city": "Pune", "state": "MH", "country": "India"},
+            headers=headers,
+        )
+        # Send only full_name — city/state/country must NOT be wiped.
+        resp = client.put(
+            "/api/auth/me",
+            json={"full_name": "Stage Two"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["full_name"] == "Stage Two"
+        assert data["city"] == "Pune"
+        assert data["state"] == "MH"
+        assert data["country"] == "India"
+
+    def test_update_mobile_marks_it_unverified(self, client):
+        _, headers = self._auth(client, "updmob")
+        resp = client.put(
+            "/api/auth/me",
+            json={"mobile": "9876543210"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mobile"] == "9876543210"
+        assert data["is_mobile_verified"] is False
+
+    def test_duplicate_mobile_conflicts(self, client):
+        _, headers_a = self._auth(client, "dupa")
+        client.put(
+            "/api/auth/me",
+            json={"mobile": "9111111111"},
+            headers=headers_a,
+        )
+        _, headers_b = self._auth(client, "dupb")
+        resp = client.put(
+            "/api/auth/me",
+            json={"mobile": "9111111111"},
+            headers=headers_b,
+        )
+        assert resp.status_code == 409
+
+    def test_invalid_mobile_rejected(self, client):
+        _, headers = self._auth(client, "updbad")
+        resp = client.put(
+            "/api/auth/me",
+            json={"mobile": "not-a-number"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    def test_empty_full_name_rejected(self, client):
+        _, headers = self._auth(client, "updempty")
+        resp = client.put(
+            "/api/auth/me",
+            json={"full_name": ""},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    def test_update_requires_auth(self, client):
+        resp = client.put("/api/auth/me", json={"full_name": "Nobody"})
+        assert resp.status_code in (401, 403)
+
+    def test_update_only_touches_current_user(self, client):
+        email_a, headers_a = self._auth(client, "isoa")
+        _, headers_b = self._auth(client, "isob")
+        client.put(
+            "/api/auth/me",
+            json={"full_name": "User A Name"},
+            headers=headers_a,
+        )
+        resp_b = client.get("/api/auth/me", headers=headers_b)
+        assert resp_b.status_code == 200
+        assert resp_b.json()["full_name"] != "User A Name"
+        resp_a = client.get("/api/auth/me", headers=headers_a)
+        assert resp_a.json()["full_name"] == "User A Name"

@@ -4,6 +4,7 @@ from sqlalchemy import String, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.verification import ProfileVerificationStatus
 
 
 class User(Base):
@@ -24,6 +25,8 @@ class User(Base):
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(100), nullable=True)
     country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pincode: Mapped[str | None] = mapped_column(String(20), nullable=True)
     profile_pic: Mapped[str | None] = mapped_column(String(500), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_phone_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -31,6 +34,11 @@ class User(Base):
     is_mobile_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_first_login: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verification_status: Mapped[str] = mapped_column(
+        String(20),
+        default=ProfileVerificationStatus.UNVERIFIED.value,
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

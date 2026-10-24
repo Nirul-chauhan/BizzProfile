@@ -38,8 +38,8 @@ export default function OurServicesSection() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="h-7 w-48 bg-gray-100 rounded-lg animate-pulse mb-2" />
           <div className="h-4 w-72 bg-gray-100 rounded-lg animate-pulse mb-8" />
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {[1, 2, 3, 4].map((i) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-5">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
               <div key={i} className="h-64 bg-gray-100 rounded-2xl animate-pulse" />
             ))}
           </div>
@@ -72,10 +72,10 @@ export default function OurServicesSection() {
             <Link
               key={svc.id}
               to={`/biz-services/${svc.id}`}
-              className="flex-shrink-0 w-80 group no-underline"
+              className="flex-shrink-0 w-80 lg:w-[calc((100%_-_100px)/6)] group no-underline"
             >
               <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden hover:shadow-xl transition-all duration-300 h-full">
-                <div className="relative h-44 overflow-hidden">
+                <div className="relative h-44 lg:h-28 overflow-hidden">
                   {svc.image_url ? (
                     <img
                       src={svc.image_url}

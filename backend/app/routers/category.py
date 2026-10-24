@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,9 +17,22 @@ router = APIRouter(prefix="/api", tags=["categories"])
 
 
 @router.get("/categories", response_model=list[CategoryResponse])
-def list_categories(db: Session = Depends(get_db_session)):
+def list_categories(
+    letter: str | None = Query(
+        None,
+        min_length=1,
+        max_length=1,
+        description="Only return categories whose name starts with this letter (A-Z).",
+    ),
+    db: Session = Depends(get_db_session),
+):
+    if letter is not None and not (letter.isascii() and letter.isalpha()):
+        raise HTTPException(status_code=422, detail="letter must be a single alphabetic character")
     svc = CategoryService(db)
-    return [CategoryResponse.model_validate(c) for c in svc.get_categories()]
+    return [
+        CategoryResponse.model_validate(c)
+        for c in svc.get_categories(letter=letter.upper() if letter else None)
+    ]
 
 
 @router.get("/categories/tree", response_model=list[CategoryTreeNode])

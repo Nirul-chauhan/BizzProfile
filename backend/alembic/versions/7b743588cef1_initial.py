@@ -28,7 +28,8 @@ def upgrade() -> None:
     op.drop_index(op.f('ix_categories_parent_id'), table_name='categories')
     op.drop_index(op.f('ix_products_is_best_seller'), table_name='products')
     op.drop_index(op.f('ix_products_is_trending'), table_name='products')
-    op.drop_index(op.f('ix_quotations_valid_until'), table_name='quotations', postgresql_where="((status)::text = ANY ((ARRAY['PENDING'::character varying, 'SENT'::character varying])::text[]))")
+    # Partial index was never created by any migration; guard so upgrade works on a fresh DB.
+    op.execute('DROP INDEX IF EXISTS ix_quotations_valid_until')
     op.alter_column('service_categories', 'is_active',
                existing_type=sa.BOOLEAN(),
                nullable=False,

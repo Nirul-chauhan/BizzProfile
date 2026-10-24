@@ -1,5 +1,5 @@
 """Seller API router — all endpoints under /api/seller/."""
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.dependencies.database import get_db_session
@@ -38,6 +38,9 @@ from app.models.product import ProductApprovalStatus
 from app.models.service import ServiceApprovalStatus
 
 router = APIRouter(prefix="/api/seller", tags=["seller"])
+
+LOGO_ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+LOGO_MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
 def _get_service(db: Session) -> SellerService:
@@ -133,6 +136,68 @@ def update_profile_location(
             {"latitude": latitude, "longitude": longitude},
         )
         return profile
+    except SellerError as e:
+        _handle_seller_error(e)
+
+
+@router.post("/profile/logo", response_model=SellerProfileResponse)
+async def upload_profile_logo(
+    file: UploadFile,
+    current_user: User = Depends(require_enduser),
+    db: Session = Depends(get_db_session),
+):
+    """Upload the business logo for the authenticated seller's profile."""
+    if file.content_type not in LOGO_ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type '{file.content_type}' is not allowed. Use JPEG, PNG, or WebP.",
+        )
+
+    content = await file.read()
+    if len(content) > LOGO_MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds maximum of 5 MB.",
+        )
+
+    # The seller must already have a business profile; check before writing
+    # anything to disk so no orphaned file is left behind.
+    svc = _get_service(db)
+    try:
+        svc.get_profile(current_user.id)
+    except SellerError as e:
+        _handle_seller_error(e)
+
+    from app.services.storage import LocalStorageService, StorageError
+
+    storage = LocalStorageService()
+    try:
+        file_path = storage.save(
+            content, file.filename or "logo.png", folder="biz-logos"
+        )
+        logo_url = storage.get_url(file_path)
+    except StorageError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not store the logo file. Please try again.",
+        )
+
+    try:
+        profile = svc.update_profile(current_user.id, {"logo_url": logo_url})
+        return profile
+    except SellerError as e:
+        _handle_seller_error(e)
+
+
+@router.delete("/profile/logo", response_model=SellerProfileResponse)
+def remove_profile_logo(
+    current_user: User = Depends(require_enduser),
+    db: Session = Depends(get_db_session),
+):
+    """Remove the business logo for the authenticated seller's profile."""
+    svc = _get_service(db)
+    try:
+        return svc.clear_profile_logo(current_user.id)
     except SellerError as e:
         _handle_seller_error(e)
 
@@ -237,6 +302,7 @@ def list_products(
     page_size: int = Query(20, ge=1, le=100),
     approval_status: ProductApprovalStatus | None = Query(None),
     search: str | None = Query(None),
+    profile_id: int | None = Query(None, description="Scope to one owned business"),
     current_user: User = Depends(require_enduser),
     db: Session = Depends(get_db_session),
 ):
@@ -248,6 +314,7 @@ def list_products(
             page_size,
             approval_status.value if approval_status else None,
             search,
+            profile_id,
         )
     except SellerError as e:
         _handle_seller_error(e)
@@ -377,6 +444,7 @@ def list_services(
     page_size: int = Query(20, ge=1, le=100),
     approval_status: ServiceApprovalStatus | None = Query(None),
     search: str | None = Query(None),
+    profile_id: int | None = Query(None, description="Scope to one owned business"),
     current_user: User = Depends(require_enduser),
     db: Session = Depends(get_db_session),
 ):
@@ -388,6 +456,7 @@ def list_services(
             page_size,
             approval_status.value if approval_status else None,
             search,
+            profile_id,
         )
     except SellerError as e:
         _handle_seller_error(e)
@@ -469,12 +538,15 @@ def list_enquiries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: str | None = Query(None, alias="status"),
+    profile_id: int | None = Query(None, description="Scope to one owned business"),
     current_user: User = Depends(require_enduser),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
-        return svc.list_enquiries(current_user.id, page, page_size, status_filter)
+        return svc.list_enquiries(
+            current_user.id, page, page_size, status_filter, profile_id
+        )
     except SellerError as e:
         _handle_seller_error(e)
 

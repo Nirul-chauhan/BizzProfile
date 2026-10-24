@@ -12,6 +12,7 @@ from app.schemas.admin import (
     AdminProfileTogglePublic,
     AdminProfileToggleVerified,
 )
+from app.models.verification import ProfileVerificationStatus
 from app.services.biz_profile import BizProfileError, BizProfileService
 
 router = APIRouter(prefix="/api/admin/profiles", tags=["admin-profiles"])
@@ -94,6 +95,13 @@ def verify_profile(
             user_id=_admin.id,
             is_admin=True,
             is_verified=request.is_verified,
+            # Keep the shared verification status in step with the admin's
+            # decision so personal/business verification never drift apart.
+            verification_status=(
+                ProfileVerificationStatus.VERIFIED.value
+                if request.is_verified
+                else ProfileVerificationStatus.UNVERIFIED.value
+            ),
         )
     except BizProfileError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

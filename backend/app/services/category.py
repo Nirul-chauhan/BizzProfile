@@ -39,10 +39,15 @@ class CategoryService:
         self.db.refresh(category)
         return category
 
-    def get_categories(self, include_inactive: bool = False) -> list[Category]:
+    def get_categories(
+        self, include_inactive: bool = False, letter: str | None = None
+    ) -> list[Category]:
         query = select(Category)
         if not include_inactive:
             query = query.where(Category.is_active == True)
+        if letter:
+            # Case-insensitive "begins with" filter, evaluated in the database.
+            query = query.where(Category.name.ilike(f"{letter}%"))
         return list(self.db.execute(query.order_by(Category.sort_order, Category.name)).scalars().all())
 
     def get_category_by_id(self, category_id: int) -> Category:

@@ -21,10 +21,12 @@ router = APIRouter(tags=["more-value-adds"])
 # ---------------------------------------------------------------------------
 # Public
 # ---------------------------------------------------------------------------
-@router.get("/api/more-value-adds", response_model=list[MoreValueAddsResponse])
+@router.get("/api/public/more-value-adds", response_model=list[MoreValueAddsResponse])
 def list_active_more_value_adds(
     db: Session = Depends(get_db_session),
 ):
+    """Active value-add cards for the homepage (data source for the
+    `More Value Adds` section)."""
     items = list(
         db.execute(
             select(MoreValueAdds)
@@ -35,6 +37,14 @@ def list_active_more_value_adds(
         .all()
     )
     return [MoreValueAddsResponse.model_validate(i) for i in items]
+
+
+# Alias kept for older builds still pointing at the pre-`public` path.
+@router.get("/api/more-value-adds", response_model=list[MoreValueAddsResponse])
+def list_active_more_value_adds_legacy(
+    db: Session = Depends(get_db_session),
+):
+    return list_active_more_value_adds(db)
 
 
 # ---------------------------------------------------------------------------

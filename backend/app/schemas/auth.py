@@ -113,10 +113,31 @@ class ResetPasswordRequest(BaseModel):
 
 
 class UpdateProfileRequest(BaseModel):
-    full_name: str = Field(..., min_length=1, max_length=150)
+    """Partial update of the authenticated user's personal profile.
+
+    Only fields present in the request body are applied, so callers can send
+    a subset (e.g. just ``full_name``) without wiping the other columns.
+    """
+
+    full_name: str | None = Field(None, min_length=1, max_length=150)
+    mobile: str | None = Field(None, max_length=20)
     city: str | None = Field(None, max_length=100)
     state: str | None = Field(None, max_length=100)
     country: str | None = Field(None, max_length=100)
+    address: str | None = Field(None, max_length=500)
+    pincode: str | None = Field(None, max_length=20)
+
+    @field_validator("mobile")
+    @classmethod
+    def validate_mobile(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        if not re.fullmatch(r"\+?[0-9][0-9 -]{6,18}[0-9]", v):
+            raise ValueError("Invalid mobile number format.")
+        return v
 
 
 class ChangePasswordRequest(BaseModel):
@@ -141,11 +162,14 @@ class UserResponse(BaseModel):
     city: str | None
     state: str | None
     country: str | None
+    address: str | None = None
+    pincode: str | None = None
     profile_pic: str | None
     is_email_verified: bool
     is_mobile_verified: bool
     is_active: bool
     is_first_login: bool = False
+    verification_status: str = "UNVERIFIED"
     role: RoleInfo
     created_at: datetime
 

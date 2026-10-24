@@ -78,14 +78,20 @@ async function request(path, options = {}) {
     ) {
       window.location.href = "/login";
     }
-    throw new Error(msg);
+    const authError = new Error(msg);
+    authError.status = 401;
+    throw authError;
   }
 
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error("Server error. Please make sure the backend is running on port 8000.");
+    const parseError = new Error(
+      "Server error. Please make sure the backend is running on port 9000."
+    );
+    parseError.status = res.status;
+    throw parseError;
   }
 
   if (!res.ok) {
@@ -99,7 +105,9 @@ async function request(path, options = {}) {
         msg = data.detail.msg || JSON.stringify(data.detail);
       }
     }
-    throw new Error(msg);
+    const httpError = new Error(msg);
+    httpError.status = res.status;
+    throw httpError;
   }
 
   return data;
@@ -167,11 +175,13 @@ export async function getMe() {
   });
 }
 
-export async function updateProfile({ full_name, city, state, country }) {
+export async function updateProfile({ full_name, mobile, city, state, country, address, pincode }) {
   return request("/auth/me", {
     method: "PUT",
     headers: authHeaders(),
-    body: JSON.stringify({ full_name, city, state, country }),
+    // Keys with an `undefined` value are dropped by JSON.stringify, so callers
+    // can send a partial payload without wiping the omitted columns.
+    body: JSON.stringify({ full_name, mobile, city, state, country, address, pincode }),
   });
 }
 
@@ -240,6 +250,12 @@ export async function getPublicProfile(slug) {
 
 export async function getCategories() {
   return request("/categories");
+}
+
+/** Categories whose name starts with `letter` (A-Z), filtered in the database. */
+export async function getCategoriesByLetter(letter) {
+  if (!letter) return request("/categories");
+  return request(`/categories?letter=${encodeURIComponent(letter)}`);
 }
 
 export async function getPopularCategories() {
@@ -418,6 +434,77 @@ export async function deleteProfile(profileId) {
   return request(`/profiles/${profileId}`, {
     method: "DELETE",
     headers: authHeaders(),
+  });
+}
+
+export async function submitBusinessVerification(profileId) {
+  return request(`/profiles/${profileId}/submit-verification`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+}
+
+async function uploadBusinessImage(profileId, file, kind) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/profiles/${profileId}/${kind}`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Server error");
+  }
+  if (!res.ok) {
+    throw new Error(data.detail || "Upload failed");
+  }
+  return data;
+}
+
+export async function uploadBusinessLogo(profileId, file) {
+  return uploadBusinessImage(profileId, file, "logo");
+}
+
+export async function uploadBusinessCover(profileId, file) {
+  return uploadBusinessImage(profileId, file, "cover");
+}
+
+export async function getBusinessSocialLinks(profileId) {
+  return request(`/profiles/${profileId}/social-links`, {
+    headers: authHeaders(),
+  });
+}
+
+export async function addBusinessSocialLink(profileId, platform, url) {
+  return request(`/profiles/${profileId}/social-links`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ platform, url }),
+  });
+}
+
+export async function deleteSocialLink(socialLinkId) {
+  return request(`/social-links/${socialLinkId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+}
+
+export async function getBusinessHours(profileId) {
+  return request(`/profiles/${profileId}/business-hours`, {
+    headers: authHeaders(),
+  });
+}
+
+export async function saveBusinessHours(profileId, dayOfWeek, data) {
+  return request(`/profiles/${profileId}/business-hours/${dayOfWeek}`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(data),
   });
 }
 
@@ -688,6 +775,45 @@ export async function sellerUpdateLocation(latitude, longitude) {
   });
 }
 
+export async function sellerUploadLogo(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/seller/profile/logo", {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Server error");
+  }
+  if (!res.ok) {
+    throw new Error(data.detail || "Upload failed");
+  }
+  return data;
+}
+
+export async function sellerRemoveLogo() {
+  const res = await fetch("/api/seller/profile/logo", {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Server error");
+  }
+  if (!res.ok) {
+    throw new Error(data.detail || "Remove failed");
+  }
+  return data;
+}
+
 export async function sellerGetSocialLinks() {
   return request("/seller/social-links", { headers: authHeaders() });
 }
@@ -710,10 +836,11 @@ export async function sellerGetDocuments() {
   return request("/seller/documents", { headers: authHeaders() });
 }
 
-export async function sellerListProducts(page = 1, pageSize = 20, approvalStatus = null, search = null) {
+export async function sellerListProducts(page = 1, pageSize = 20, approvalStatus = null, search = null, profileId = null) {
   const params = new URLSearchParams({ page, page_size: pageSize });
   if (approvalStatus) params.append("approval_status", approvalStatus);
   if (search) params.append("search", search);
+  if (profileId) params.append("profile_id", profileId);
   return request(`/seller/products?${params}`, {
     headers: authHeaders(),
   });
@@ -773,18 +900,20 @@ export async function sellerDeleteProductImage(imageId) {
   });
 }
 
-export async function sellerListServices(page = 1, pageSize = 20, approvalStatus = null, search = null) {
+export async function sellerListServices(page = 1, pageSize = 20, approvalStatus = null, search = null, profileId = null) {
   const params = new URLSearchParams({ page, page_size: pageSize });
   if (approvalStatus) params.append("approval_status", approvalStatus);
   if (search) params.append("search", search);
+  if (profileId) params.append("profile_id", profileId);
   return request(`/seller/services?${params}`, {
     headers: authHeaders(),
   });
 }
 
-export async function sellerListEnquiries(page = 1, pageSize = 20, status = null) {
+export async function sellerListEnquiries(page = 1, pageSize = 20, status = null, profileId = null) {
   const params = new URLSearchParams({ page, page_size: pageSize });
   if (status) params.append("status", status);
+  if (profileId) params.append("profile_id", profileId);
   return request(`/seller/enquiries?${params}`, { headers: authHeaders() });
 }
 
@@ -972,6 +1101,34 @@ export async function adminUploadMoreValueAddsImage(id, file) {
   });
 }
 
+// --- App Promotional Section (Public) ---
+export async function getAppPromo() {
+  return request("/public/app-promo");
+}
+
+// --- App Promotional Section (Admin) ---
+export async function adminGetAppPromo() {
+  return request("/admin/app-promo", { headers: authHeaders() });
+}
+
+export async function adminUpdateAppPromo(data) {
+  return request("/admin/app-promo", {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify(data),
+  });
+}
+
+export async function adminUploadAppPromoAsset(field, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request(`/admin/app-promo/upload?field=${encodeURIComponent(field)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    body: formData,
+  });
+}
+
 // --- Trending Videos (Public) ---
 export async function getTrendingVideos(limit = 20) {
   return request(`/trending-videos?is_active=true&limit=${limit}`);
@@ -1134,12 +1291,23 @@ export async function getSocieties() {
 }
 
 // --- Nearby Profiles (Public with location) ---
-export async function getNearbyAll({ latitude, longitude, radiusKm = 5, limit = 20 } = {}) {
+export async function getNearbyAll({
+  latitude,
+  longitude,
+  radiusKm = 5,
+  limit = 20,
+  categoryId = null,
+  bestSellersOnly = false,
+  sort = "nearest",
+} = {}) {
   const params = new URLSearchParams();
   if (latitude != null) params.set("latitude", latitude);
   if (longitude != null) params.set("longitude", longitude);
   params.set("radius_km", radiusKm);
   params.set("limit", limit);
+  if (categoryId) params.set("category_id", categoryId);
+  if (bestSellersOnly) params.set("best_sellers_only", true);
+  if (sort) params.set("sort", sort);
   return request(`/nearby?${params.toString()}`);
 }
 
@@ -1194,6 +1362,11 @@ export async function getBestSellersCount(categoryId) {
 
 export async function getPublicProduct(productId) {
   return request(`/public/products/${productId}`);
+}
+
+/** Most popular active products, ranked by real backend signals. */
+export async function getPopularProducts(limit = 8) {
+  return request(`/public/products/popular?limit=${limit}`);
 }
 
 export async function listPublicProducts(params = {}) {
@@ -1557,6 +1730,7 @@ export async function sellerListMyServices(params = {}) {
   });
   if (params.approval_status) qs.set("approval_status", params.approval_status);
   if (params.search) qs.set("search", params.search);
+  if (params.profile_id) qs.set("profile_id", params.profile_id);
   return request(`/seller/services?${qs}`, { headers: authHeaders() });
 }
 

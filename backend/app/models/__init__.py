@@ -1,4 +1,5 @@
 from app.database import Base
+from app.models.app_promo import AppPromo
 from app.models.biz_profile import (
     BizProfile,
     CompanyProfile,
@@ -31,6 +32,7 @@ from app.models.service_listing import ServiceCategory, ServiceSubcategory, Serv
 from app.models.notification import Notification, NotificationType
 
 __all__ = [
+    "AppPromo",
     "Banner",
     "Base",
     "BestSellerRequest",

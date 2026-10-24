@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { MapPin, Phone, Clock, Star, ArrowLeft, Tag, Globe, Mail, Wrench, ChevronRight, ShieldCheck, Send } from "lucide-react";
 import { getPublicServiceById, getAuthToken } from "../api";
 import EnquiryFormModal from "./EnquiryFormModal";
+import { takeEnquiryDraft } from "./enquiryDraft";
 
 function formatPrice(service) {
   const { price_min, price_max, price_unit } = service;
@@ -17,12 +18,21 @@ function formatPrice(service) {
 
 export default function SellerServiceDetailPage() {
   const { serviceId } = useParams();
-  const navigate = useNavigate();
   const [service, setService] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const [showEnquiry, setShowEnquiry] = useState(false);
+
+  const [enquiryDraft, setEnquiryDraft] = useState(null);
+
+  useEffect(() => {
+    const draft = takeEnquiryDraft();
+    if (draft && getAuthToken()) {
+      setEnquiryDraft(draft);
+      setShowEnquiry(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (!serviceId) return;
@@ -145,7 +155,7 @@ export default function SellerServiceDetailPage() {
               <h3 className="text-base font-bold text-gray-900 mb-2">Interested in this service?</h3>
               <p className="text-xs text-gray-500 mb-4">Send an enquiry and the provider will respond with a quotation.</p>
               <button
-                onClick={() => { if (!getAuthToken()) return navigate("/login"); setShowEnquiry(true); }}
+                onClick={() => setShowEnquiry(true)}
                 className="w-full py-3 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 transition-colors cursor-pointer border-none flex items-center justify-center gap-2"
               >
                 <Send className="w-4 h-4" /> Send Enquiry
@@ -220,8 +230,10 @@ export default function SellerServiceDetailPage() {
       {/* Enquiry Modal */}
       <EnquiryFormModal
         open={showEnquiry}
-        target={service ? { type: "service", id: service.id, name: service.name, profile_id: service.profile_id } : null}
-        onClose={() => setShowEnquiry(false)}
+        target={enquiryDraft ? enquiryDraft.target : (service ? { type: "service", id: service.id, name: service.name, profile_id: service.profile_id } : null)}
+        onClose={() => { setShowEnquiry(false); setEnquiryDraft(null); }}
+        restoreKey={enquiryDraft ? enquiryDraft.target.id : null}
+        initialValues={enquiryDraft}
       />
     </div>
   );

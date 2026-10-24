@@ -22,7 +22,16 @@ GEO_TABLES = ("biz_profiles", "biz_services", "service_listings")
 
 
 def _is_postgis() -> bool:
-    return op.get_bind().dialect.name == "postgresql"
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return False
+    # PostGIS must be installable (bundled/embedded PostgreSQL ships without
+    # it). Without the extension the spatial columns cannot be added and the
+    # application falls back to its Haversine distance expression.
+    row = bind.execute(
+        sa.text("SELECT 1 FROM pg_available_extensions WHERE name = 'postgis'")
+    ).first()
+    return row is not None
 
 
 def upgrade() -> None:

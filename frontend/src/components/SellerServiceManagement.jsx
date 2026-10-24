@@ -6,7 +6,9 @@ import {
   sellerUpdateService,
   sellerDeleteService,
   sellerSubmitService,
-  getServiceCategories,
+  getCategories,
+  getSubcategories,
+  getPublicServices,
 } from "../api";
 
 const EMPTY_FORM = {
@@ -14,14 +16,16 @@ const EMPTY_FORM = {
   category_id: "",
   subcategory_id: "",
   description: "",
+  image_url: "",
   price: "",
   price_unit: "",
   is_available: true,
 };
 
-export default function SellerServiceManagement() {
+export default function SellerServiceManagement({ profileId = null }) {
   const [services, setServices] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [subcategories, setSubcategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -29,19 +33,51 @@ export default function SellerServiceManagement() {
   const [saving, setSaving] = useState(false);
   const [submittingId, setSubmittingId] = useState(null);
 
-  useEffect(() => { load(); loadCategories(); }, []);
+  // "mine"  -> services owned by this seller (editable)
+  // "market" -> the exact same public list the Home Page "Our Services" shows
+  const [activeTab, setActiveTab] = useState("mine");
+  const [market, setMarket] = useState([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+
+  useEffect(() => { load(); loadCategories(); }, [profileId]);
+  useEffect(() => { if (activeTab === "market") loadMarket(); }, [activeTab]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const d = await sellerListMyServices();
+      const d = await sellerListMyServices(profileId ? { profile_id: profileId } : {});
       setServices(Array.isArray(d) ? d : (d?.items ?? []));
     } catch (e) { alert(e.message); }
     setLoading(false);
   };
 
   const loadCategories = async () => {
-    try { const d = await getServiceCategories(); setCategories(Array.isArray(d) ? d : []); } catch {}
+    try { const d = await getCategories(); setCategories(Array.isArray(d) ? d : []); } catch {}
+  };
+
+  // Same endpoint / same ordering as the Home Page "Our Services" section, so
+  // this tab mirrors exactly what a visitor sees on the marketplace.
+  const loadMarket = async () => {
+    setMarketLoading(true);
+    try {
+      const d = await getPublicServices({ page_size: 100 });
+      setMarket(Array.isArray(d) ? d : (d?.items ?? []));
+    } catch { setMarket([]); }
+    setMarketLoading(false);
+  };
+
+  const handleCategoryChange = async (categoryId, keepSubcategory = false) => {
+    setForm((f) => ({
+      ...f,
+      category_id: categoryId,
+      subcategory_id: keepSubcategory ? f.subcategory_id : "",
+    }));
+    setSubcategories([]);
+    if (!categoryId) return;
+    try {
+      const d = await getSubcategories(Number(categoryId));
+      setSubcategories(Array.isArray(d) ? d : []);
+    } catch { setSubcategories([]); }
   };
 
   const handleSave = async () => {
@@ -52,6 +88,7 @@ export default function SellerServiceManagement() {
       category_id: Number(form.category_id),
       subcategory_id: form.subcategory_id ? Number(form.subcategory_id) : null,
       description: form.description || null,
+      image_url: (form.image_url || "").trim() || null,
       price: form.price ? Number(form.price) : null,
       price_min: form.price ? Number(form.price) : null,
       price_max: form.price_max ? Number(form.price_max) : null,
@@ -61,7 +98,7 @@ export default function SellerServiceManagement() {
     try {
       if (editItem) { await sellerUpdateService(editItem.id, data); }
       else { await sellerCreateService(data); }
-      setShowModal(false); setEditItem(null); setForm(EMPTY_FORM); load();
+      setShowModal(false); setEditItem(null); setForm(EMPTY_FORM); load(); if (activeTab === "market") loadMarket();
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
@@ -80,21 +117,25 @@ export default function SellerServiceManagement() {
       ? "This service is live on the marketplace. Deleting it will remove it immediately. Continue?"
       : "Delete this service?";
     if (!confirm(warn)) return;
-    try { await sellerDeleteService(svc.id); load(); } catch (e) { alert(e.message); }
+    try { await sellerDeleteService(svc.id); load(); if (activeTab === "market") loadMarket(); } catch (e) { alert(e.message); }
   };
 
-  const openCreate = () => { setForm(EMPTY_FORM); setEditItem(null); setShowModal(true); };
+  const openCreate = () => {
+    setForm(EMPTY_FORM);
+    setEditItem(null);
+    setSubcategories([]);
+    setShowModal(true);
+  };
 
   const openEdit = (svc) => {
-    if (svc.approval_status === "APPROVED") {
-      alert("Approved services are locked. Contact admin to make changes.");
-      return;
-    }
+    // Editing re-opens admin review (the backend moves the service back to
+    // PENDING), so even a live service can be changed by its owner.
     setForm({
       name: svc.name || "",
       category_id: svc.category_id || "",
       subcategory_id: svc.subcategory_id || "",
       description: svc.description || "",
+      image_url: svc.image_url || "",
       price: svc.price_min ?? "",
       price_max: svc.price_max ?? "",
       price_unit: svc.price_unit || "",
@@ -102,6 +143,9 @@ export default function SellerServiceManagement() {
     });
     setEditItem(svc);
     setShowModal(true);
+    if (svc.category_id) {
+      handleCategoryChange(svc.category_id, true);
+    }
   };
 
   const pendingCount = services.filter(s => s.approval_status === "PENDING").length;
@@ -113,9 +157,11 @@ export default function SellerServiceManagement() {
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center"><Wrench className="w-5 h-5 text-indigo-600" /></div>
           <div>
-            <h2 className="text-xl font-bold text-gray-900">My Services</h2>
+            <h2 className="text-xl font-bold text-gray-900">{activeTab === "mine" ? "My Services" : "Our Services"}</h2>
             <p className="text-sm text-gray-500">
-              {services.length} service{services.length === 1 ? "" : "s"} · {pendingCount} awaiting review · {approvedCount} live
+              {activeTab === "mine"
+                ? <>{services.length} service{services.length === 1 ? "" : "s"} · {pendingCount} awaiting review · {approvedCount} live</>
+                : <>{market.length} service{market.length === 1 ? "" : "s"} published on the marketplace · same list as the Home Page</>}
             </p>
           </div>
         </div>
@@ -124,7 +170,16 @@ export default function SellerServiceManagement() {
         </button>
       </div>
 
-      {loading ? <div className="text-center py-12 text-gray-400">Loading...</div> : services.length === 0 ? (
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        <button onClick={() => setActiveTab("mine")} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors cursor-pointer border-none ${activeTab === "mine" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+          My Services ({services.length})
+        </button>
+        <button onClick={() => setActiveTab("market")} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors cursor-pointer border-none ${activeTab === "market" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+          Our Services ({market.length})
+        </button>
+      </div>
+
+      {activeTab === "mine" && (loading ? <div className="text-center py-12 text-gray-400">Loading...</div> : services.length === 0 ? (
         <div className="text-center py-12 bg-white border border-gray-200 rounded-xl">
           <Wrench className="w-10 h-10 text-gray-300 mx-auto mb-2" />
           <p className="text-gray-500 text-sm mb-3">No services yet</p>
@@ -170,7 +225,7 @@ export default function SellerServiceManagement() {
                   ) : null}
                   <button
                     onClick={() => openEdit(svc)}
-                    title={svc.approval_status === "APPROVED" ? "Approved services are locked" : "Edit"}
+                    title="Edit"
                     className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 cursor-pointer border-none"
                   >
                     <Pencil className="w-4 h-4" />
@@ -189,7 +244,61 @@ export default function SellerServiceManagement() {
             </div>
           ))}
         </div>
-      )}
+      ))}
+
+      {activeTab === "market" && (marketLoading ? (
+        <div className="text-center py-12 text-gray-400">Loading...</div>
+      ) : market.length === 0 ? (
+        <div className="text-center py-12 bg-white border border-gray-200 rounded-xl">
+          <Wrench className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+          <p className="text-gray-500 text-sm">No published services yet</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {market.map(svc => {
+            const own = services.find(s => s.id === svc.id);
+            return (
+              <div key={svc.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {svc.image_url ? <img src={svc.image_url} alt="" className="w-full h-full object-cover" /> : <Wrench className="w-6 h-6 text-gray-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm font-bold text-gray-900 truncate">{svc.name}</h3>
+                      <span className="text-[10px] font-bold text-green-600">LIVE</span>
+                      {own ? <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-700">Yours</span> : null}
+                      {svc.category?.name ? <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-gray-100 text-gray-600">{svc.category.name}</span> : null}
+                      {svc.is_verified ? <span className="text-[10px] font-bold text-blue-600">Verified</span> : null}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {formatPrice(svc)}
+                      {svc.price_unit ? ` / ${svc.price_unit}` : ""}
+                      {svc.business_name ? ` · ${svc.business_name}` : ""}
+                      {svc.business_city ? ` · ${svc.business_city}` : ""}
+                    </p>
+                    {svc.description ? (
+                      <p className="text-[11px] text-gray-400 mt-0.5 line-clamp-2">{svc.description}</p>
+                    ) : null}
+                  </div>
+                  {own ? (
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button onClick={() => openEdit(own)} title="Edit" className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 cursor-pointer border-none">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(own)} title="Delete" className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 cursor-pointer border-none">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] font-bold text-gray-400 flex-shrink-0">View only</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
 
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
@@ -202,7 +311,7 @@ export default function SellerServiceManagement() {
               <Field label="Service Name *" value={form.name || ""} onChange={v => setForm({ ...form, name: v })} />
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Category *</label>
-                <select value={form.category_id || ""} onChange={e => setForm({ ...form, category_id: e.target.value, subcategory_id: "" })} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white">
+                <select value={form.category_id || ""} onChange={e => handleCategoryChange(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white">
                   <option value="">Select...</option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -211,8 +320,21 @@ export default function SellerServiceManagement() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Subcategory</label>
                 <select value={form.subcategory_id || ""} onChange={e => setForm({ ...form, subcategory_id: e.target.value })} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white">
                   <option value="">Select...</option>
-                  {(categories.find(c => c.id === Number(form.category_id))?.subcategories || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {subcategories.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Image URL</label>
+                <input
+                  type="text"
+                  value={form.image_url || ""}
+                  onChange={e => setForm({ ...form, image_url: e.target.value })}
+                  placeholder="https://example.com/service.jpg"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+                {form.image_url && (
+                  <img src={form.image_url} alt="" className="mt-2 w-20 h-20 rounded-lg object-cover border border-gray-200" />
+                )}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="Price" type="number" value={form.price ?? ""} onChange={v => setForm({ ...form, price: v })} />

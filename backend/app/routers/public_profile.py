@@ -36,6 +36,7 @@ def _serialize_public_profile(profile: BizProfile) -> dict:
         "logo_url": profile.logo_url,
         "cover_image_url": profile.cover_image_url,
         "is_verified": profile.is_verified,
+        "verification_status": profile.verification_status,
         "created_at": profile.created_at,
         "category": {
             "id": profile.category.id,

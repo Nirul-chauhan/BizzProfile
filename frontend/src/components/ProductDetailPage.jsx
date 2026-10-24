@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { getPublicProduct, getAuthToken } from "../api";
 import EnquiryFormModal from "./EnquiryFormModal";
+import { takeEnquiryDraft } from "./enquiryDraft";
 
 export default function ProductDetailPage() {
   const { id } = useParams();
@@ -15,6 +16,15 @@ export default function ProductDetailPage() {
   const [error, setError] = useState(null);
   const [activeImg, setActiveImg] = useState(0);
   const [showInquiry, setShowInquiry] = useState(false);
+  const [inquiryDraft, setInquiryDraft] = useState(null);
+
+  useEffect(() => {
+    const draft = takeEnquiryDraft();
+    if (draft && getAuthToken()) {
+      setInquiryDraft(draft);
+      setShowInquiry(true);
+    }
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -160,7 +170,7 @@ export default function ProductDetailPage() {
                   View Business
                 </Link>
               )}
-              <button onClick={() => { if (!getAuthToken()) return navigate("/login", { state: { from: `/products/${id}` } }); setShowInquiry(true); }} className="flex-1 py-3 bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer flex items-center justify-center gap-2">
+              <button onClick={() => setShowInquiry(true)} className="flex-1 py-3 bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer flex items-center justify-center gap-2">
                 <Send className="w-4 h-4" /> Send Inquiry
               </button>
             </div>
@@ -171,8 +181,10 @@ export default function ProductDetailPage() {
       {/* Inquiry Modal */}
       <EnquiryFormModal
         open={showInquiry}
-        target={product ? { type: "product", id: product.id, name: product.name, profile_id: product.profile_id } : null}
-        onClose={() => setShowInquiry(false)}
+        target={inquiryDraft ? inquiryDraft.target : (product ? { type: "product", id: product.id, name: product.name, profile_id: product.profile_id } : null)}
+        onClose={() => { setShowInquiry(false); setInquiryDraft(null); }}
+        restoreKey={inquiryDraft ? inquiryDraft.target.id : null}
+        initialValues={inquiryDraft}
       />
     </div>
   );

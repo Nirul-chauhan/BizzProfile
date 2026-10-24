@@ -8,6 +8,7 @@ import {
   adminCreateServiceSubcategory, adminUpdateServiceSubcategory, adminDeleteServiceSubcategory,
   adminListServiceListings, adminCreateServiceListing, adminUpdateServiceListing, adminDeleteServiceListing,
   adminToggleServiceActive, adminToggleServiceFeatured, adminReviewServiceListing, adminListServiceRequests,
+  adminListBizServiceRequests, adminReviewBizServiceRequest,
 } from "../api";
 
 export default function ServiceManagement() {
@@ -15,6 +16,13 @@ export default function ServiceManagement() {
   const [categories, setCategories] = useState([]);
   const [services, setServices] = useState({ items: [], total: 0 });
   const [requests, setRequests] = useState([]);
+  // Seller-submitted services from the Seller Dashboard live in `biz_services`
+  // and need their own approval queue (different table from "Requests" above).
+  const [approvals, setApprovals] = useState([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
+  const [approvingId, setApprovingId] = useState(null);
+  const [rejectingId, setRejectingId] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -26,9 +34,10 @@ export default function ServiceManagement() {
   const [saving, setSaving] = useState(false);
   const [page, setPage] = useState(1);
 
-  useEffect(() => { loadCategories(); }, []);
+  useEffect(() => { loadCategories(); loadApprovals(); }, []);
   useEffect(() => { if (activeTab === "services") loadServices(); }, [activeTab, search, statusFilter, catFilter, page]);
   useEffect(() => { if (activeTab === "requests") loadRequests(); }, [activeTab]);
+  useEffect(() => { if (activeTab === "approvals") loadApprovals(); }, [activeTab]);
 
   const loadCategories = async () => {
     try { const d = await adminListServiceCategories(); setCategories(Array.isArray(d) ? d : []); } catch {}
@@ -45,6 +54,22 @@ export default function ServiceManagement() {
     setLoading(true);
     try { const d = await adminListServiceRequests(); setRequests(Array.isArray(d) ? d : []); } catch {}
     setLoading(false);
+  };
+
+  const loadApprovals = async () => {
+    setApprovalsLoading(true);
+    try { const d = await adminListBizServiceRequests(); setApprovals(Array.isArray(d) ? d : []); } catch {}
+    setApprovalsLoading(false);
+  };
+
+  const handleReviewSellerService = async (svc, action) => {
+    setApprovingId(svc.id);
+    try {
+      await adminReviewBizServiceRequest(svc.id, action, action === "reject" ? rejectReason.trim() || null : null);
+      setRejectingId(null); setRejectReason("");
+      loadApprovals();
+    } catch (e) { alert(e.message); }
+    setApprovingId(null);
   };
 
   const handleSaveCategory = async () => {
@@ -98,6 +123,7 @@ export default function ServiceManagement() {
     { id: "services", label: "Manage Services" },
     { id: "categories", label: "Categories" },
     { id: "requests", label: `Requests (${requests.length})` },
+    { id: "approvals", label: `Seller Approvals (${approvals.length})` },
   ];
 
   return (
@@ -240,6 +266,63 @@ export default function ServiceManagement() {
               <div className="flex gap-1">
                 <button onClick={() => handleReview(svc.id, "APPROVED")} className="px-3 py-1.5 bg-green-50 text-green-600 text-xs font-bold rounded-lg hover:bg-green-100 cursor-pointer border-none">Approve</button>
                 <button onClick={() => handleReview(svc.id, "REJECTED")} className="px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded-lg hover:bg-red-100 cursor-pointer border-none">Reject</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ─── Seller Approvals Tab ─── */}
+      {/* Services created from Seller Dashboard → My Services. They sit in
+          `biz_services` as PENDING drafts; approving them publishes them to the
+          public marketplace, i.e. the Home Page "Our Services" section. */}
+      {activeTab === "approvals" && (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">
+            Services submitted by sellers. Approving publishes the service to the Home Page
+            &ldquo;Our Services&rdquo; section; rejecting returns it to the seller for changes.
+          </p>
+          {approvalsLoading ? (
+            <div className="text-center py-12 text-gray-400">Loading...</div>
+          ) : approvals.length === 0 ? (
+            <div className="text-center py-12 bg-white border border-gray-200 rounded-xl"><CheckCircle2 className="w-10 h-10 text-gray-300 mx-auto mb-2" /><p className="text-gray-500 text-sm">No services awaiting approval</p></div>
+          ) : approvals.map(svc => (
+            <div key={svc.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-4">
+              <div className="w-14 h-14 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
+                {svc.image_url ? <img src={svc.image_url} alt="" className="w-full h-full object-cover" /> : <Wrench className="w-6 h-6 text-gray-400" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-gray-900 truncate">{svc.name}</h3>
+                  <StatusBadge status={svc.approval_status} />
+                  {svc.is_featured && <Star className="w-3.5 h-3.5 text-yellow-500" />}
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {svc.category?.name || "Uncategorised"}{svc.business ? ` · ${svc.business.business_name}` : ""}{svc.business?.city ? ` - ${svc.business.city}` : ""}
+                </p>
+                <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                  {svc.price_min != null ? <span>₹{svc.price_min.toLocaleString("en-IN")}{svc.price_max && svc.price_max !== svc.price_min ? ` - ₹${svc.price_max.toLocaleString("en-IN")}` : ""}{svc.price_unit ? ` / ${svc.price_unit}` : ""}</span> : <span>Price on request</span>}
+                  {svc.created_at && <span>Created {new Date(svc.created_at).toLocaleDateString()}</span>}
+                </div>
+                {svc.description && <p className="text-xs text-gray-600 bg-gray-50 p-2 rounded-lg mt-2">{svc.description}</p>}
+              </div>
+              <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                <div className="flex gap-1">
+                  <button onClick={() => handleReviewSellerService(svc, "approve")} disabled={approvingId === svc.id} className="px-3 py-1.5 bg-green-50 text-green-600 text-xs font-bold rounded-lg hover:bg-green-100 cursor-pointer border-none disabled:opacity-50">Approve</button>
+                  <button onClick={() => { setRejectingId(rejectingId === svc.id ? null : svc.id); setRejectReason(""); }} disabled={approvingId === svc.id} className="px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded-lg hover:bg-red-100 cursor-pointer border-none disabled:opacity-50">Reject</button>
+                </div>
+                {rejectingId === svc.id && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={rejectReason}
+                      onChange={e => setRejectReason(e.target.value)}
+                      placeholder="Reason (optional, shown to seller)"
+                      className="px-3 py-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 outline-none w-56"
+                    />
+                    <button onClick={() => handleReviewSellerService(svc, "reject")} disabled={approvingId === svc.id} className="px-3 py-2 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 cursor-pointer border-none disabled:opacity-50">Confirm</button>
+                  </div>
+                )}
               </div>
             </div>
           ))}

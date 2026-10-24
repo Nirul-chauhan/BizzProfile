@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import func, literal_column, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.types import UserDefinedType
 
@@ -86,7 +86,28 @@ class LocationRepository:
 
     def __init__(self, db: Session) -> None:
         self.db = db
-        self._use_postgis = db.bind is not None and db.bind.dialect.name == "postgresql"
+        self._use_postgis = db.bind is not None and self._postgis_available(db)
+
+    @staticmethod
+    def _postgis_available(db: Session) -> bool:
+        """True only when the DB really has PostGIS (and the `location` column).
+
+        PostgreSQL does not imply PostGIS: embedded/bundled servers ship
+        without it and migration b2c3d4e5f6a8 skips the spatial columns
+        there, so the Haversine fallback must be used instead.
+        """
+        bind = db.bind
+        if bind is None or bind.dialect.name != "postgresql":
+            return False
+        try:
+            return (
+                db.execute(
+                    text("SELECT 1 FROM pg_extension WHERE extname = 'postgis'")
+                ).first()
+                is not None
+            )
+        except Exception:
+            return False
 
     # -- Column sets for the tables that carry coordinates ----------------
 

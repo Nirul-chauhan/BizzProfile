@@ -1,0 +1,58 @@
+2026-10-21 05:26:29.929 GMT [25376] LOG:  starting PostgreSQL 16.2 on x86_64-pc-mingw64, compiled by gcc.exe (x86_64-posix-seh-rev2, Built by MinGW-W64 project) 12.2.0, 64-bit
+2026-10-21 05:26:29.931 GMT [25376] LOG:  listening on IPv4 address "127.0.0.1", port 24538
+2026-10-21 05:26:30.222 GMT [14068] LOG:  database system was shut down at 2026-10-21 05:26:03 GMT
+2026-10-21 05:26:30.556 GMT [25376] LOG:  database system is ready to accept connections
+2026-10-21 05:26:32.394 GMT [25376] LOG:  received fast shutdown request
+2026-10-21 05:26:32.398 GMT [25376] LOG:  aborting any active transactions
+2026-10-21 05:26:32.476 GMT [25376] LOG:  background worker "logical replication launcher" (PID 14596) exited with exit code 1
+2026-10-21 05:26:32.531 GMT [26588] LOG:  shutting down
+2026-10-21 05:26:32.537 GMT [26588] LOG:  checkpoint starting: shutdown immediate
+2026-10-21 05:26:32.823 GMT [26588] LOG:  checkpoint complete: wrote 3 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.010 s, total=0.291 s; sync files=2, longest=0.005 s, average=0.005 s; distance=0 kB, estimate=0 kB; lsn=0/14821D8, redo lsn=0/14821D8
+2026-10-21 05:26:33.139 GMT [25376] LOG:  database system is shut down
+2026-10-21 05:29:28.221 GMT [24584] LOG:  starting PostgreSQL 16.2 on x86_64-pc-mingw64, compiled by gcc.exe (x86_64-posix-seh-rev2, Built by MinGW-W64 project) 12.2.0, 64-bit
+2026-10-21 05:29:28.222 GMT [24584] LOG:  listening on IPv4 address "127.0.0.1", port 3497
+2026-10-21 05:29:28.391 GMT [6292] LOG:  database system was shut down at 2026-10-21 05:26:32 GMT
+2026-10-21 05:29:28.493 GMT [24584] LOG:  database system is ready to accept connections
+2026-10-21 05:31:02.270 GMT [13260] ERROR:  relation "products" does not exist
+2026-10-21 05:31:02.270 GMT [13260] STATEMENT:  
+	CREATE TABLE leads (
+		id SERIAL NOT NULL, 
+		product_id INTEGER NOT NULL, 
+		buyer_id INTEGER NOT NULL, 
+		message TEXT, 
+		phone_to_call VARCHAR(20), 
+		status VARCHAR(20) DEFAULT 'NEW' NOT NULL, 
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+		PRIMARY KEY (id), 
+		FOREIGN KEY(product_id) REFERENCES products (id), 
+		FOREIGN KEY(buyer_id) REFERENCES users (id)
+	)
+	
+	
+2026-10-21 05:34:28.345 GMT [19108] LOG:  checkpoint starting: time
+2026-10-21 05:34:48.943 GMT [10128] ERROR:  relation "alembic_version" does not exist at character 25
+2026-10-21 05:34:48.943 GMT [10128] STATEMENT:  SELECT version_num FROM alembic_version
+2026-10-21 05:36:36.965 GMT [19108] LOG:  checkpoint complete: wrote 957 buffers (5.8%); 0 WAL file(s) added, 0 removed, 0 recycled; write=118.120 s, sync=10.417 s, total=128.620 s; sync files=415, longest=0.102 s, average=0.026 s; distance=4637 kB, estimate=4637 kB; lsn=0/1909808, redo lsn=0/19097D0
+2026-10-21 05:38:40.995 GMT [9588] ERROR:  index "ix_biz_profiles_featured_order" does not exist
+2026-10-21 05:38:40.995 GMT [9588] STATEMENT:  
+	DROP INDEX ix_biz_profiles_featured_order
+2026-10-21 05:39:28.098 GMT [19108] LOG:  checkpoint starting: time
+2026-10-21 05:39:40.360 GMT [19108] LOG:  checkpoint complete: wrote 96 buffers (0.6%); 0 WAL file(s) added, 0 removed, 0 recycled; write=11.908 s, sync=0.315 s, total=12.263 s; sync files=128, longest=0.026 s, average=0.003 s; distance=711 kB, estimate=4244 kB; lsn=0/19BB658, redo lsn=0/19BB620
+2026-10-21 05:42:53.508 GMT [12416] ERROR:  index "ix_quotations_valid_until" does not exist
+2026-10-21 05:42:53.508 GMT [12416] STATEMENT:  
+	DROP INDEX ix_quotations_valid_until
+2026-10-21 05:44:30.226 GMT [19108] LOG:  checkpoint starting: time
+2026-10-21 05:44:49.714 GMT [19108] LOG:  checkpoint complete: wrote 140 buffers (0.9%); 0 WAL file(s) added, 0 removed, 0 recycled; write=17.321 s, sync=1.846 s, total=19.488 s; sync files=298, longest=0.143 s, average=0.007 s; distance=1505 kB, estimate=3970 kB; lsn=0/1B33BE0, redo lsn=0/1B33BA8
+2026-10-21 05:51:07.519 GMT [3540] ERROR:  extension "postgis" is not available
+2026-10-21 05:51:07.519 GMT [3540] DETAIL:  Could not open extension control file "C:/Users/hp/Desktop/BizzProfile/backend/venv/Lib/site-packages/pgserver/pginstall/share/postgresql/extension/postgis.control": No such file or directory.
+2026-10-21 05:51:07.519 GMT [3540] HINT:  The extension must first be installed on the system where PostgreSQL is running.
+2026-10-21 05:51:07.519 GMT [3540] STATEMENT:  CREATE EXTENSION IF NOT EXISTS postgis
+2026-10-21 05:54:31.125 GMT [19108] LOG:  checkpoint starting: time
+2026-10-21 05:54:54.457 GMT [19108] LOG:  checkpoint complete: wrote 131 buffers (0.8%); 1 WAL file(s) added, 0 removed, 0 recycled; write=18.132 s, sync=2.668 s, total=23.333 s; sync files=300, longest=0.503 s, average=0.009 s; distance=1463 kB, estimate=3720 kB; lsn=0/1CA1AC8, redo lsn=0/1CA1A90
+2026-10-21 05:59:32.030 GMT [19108] LOG:  checkpoint starting: time
+2026-10-21 06:00:16.812 GMT [19108] LOG:  checkpoint complete: wrote 201 buffers (1.2%); 0 WAL file(s) added, 0 removed, 0 recycled; write=40.371 s, sync=4.119 s, total=44.783 s; sync files=308, longest=1.642 s, average=0.014 s; distance=1432 kB, estimate=3491 kB; lsn=0/1E5D050, redo lsn=0/1E07B98
+2026-10-21 06:04:33.090 GMT [19108] LOG:  checkpoint starting: time
+2026-10-21 06:05:18.960 GMT [19108] LOG:  checkpoint complete: wrote 43 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=32.135 s, sync=2.105 s, total=45.871 s; sync files=10, longest=2.076 s, average=0.211 s; distance=341 kB, estimate=3176 kB; lsn=0/1E5D1F0, redo lsn=0/1E5D1B8
+2026-10-21 06:21:12.263 GMT [1808] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	

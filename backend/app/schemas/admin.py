@@ -57,6 +57,7 @@ class AdminProfileResponse(BaseModel):
     is_public: bool
     is_verified: bool
     is_active: bool
+    verification_status: str = "UNVERIFIED"
     created_at: datetime
     updated_at: datetime
 

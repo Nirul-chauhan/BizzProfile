@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ShieldCheck, Building2, Play, X, Package, Send, MapPin, TrendingUp, Phone } from "lucide-react";
 import { getTrendingVideos, getBestSellers, getTrendingProducts, getTrendingCategories, getAuthToken } from "../api";
 import EnquiryFormModal from "./EnquiryFormModal";
+import { takeEnquiryDraft } from "./enquiryDraft";
 
 /* ─── BEST SELLERS ────────────────────────────────────── */
 export function BestSellersSection() {
@@ -10,8 +11,16 @@ export function BestSellersSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
-  const navigate = useNavigate();
   const [inquiryProduct, setInquiryProduct] = useState(null);
+  const [inquiryDraft, setInquiryDraft] = useState(null);
+
+  useEffect(() => {
+    const draft = takeEnquiryDraft();
+    if (draft && getAuthToken()) {
+      setInquiryProduct(draft.target);
+      setInquiryDraft(draft);
+    }
+  }, []);
 
   useEffect(() => {
     getBestSellers({ page_size: 20 })
@@ -108,7 +117,7 @@ export function BestSellersSection() {
                     <Link to={`/products/${prod.id}`} className="flex-1 py-1.5 bg-gray-900 text-white text-[11px] font-bold rounded-lg text-center hover:bg-gray-800 transition-colors no-underline">
                       View Details
                     </Link>
-                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!getAuthToken()) return navigate("/login"); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-orange-50 text-orange-700 text-[11px] font-bold rounded-lg hover:bg-orange-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
+                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-orange-50 text-orange-700 text-[11px] font-bold rounded-lg hover:bg-orange-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
                       <Send className="w-3 h-3" />Inquiry
                     </button>
                   </div>
@@ -123,7 +132,9 @@ export function BestSellersSection() {
       <EnquiryFormModal
         open={!!inquiryProduct}
         target={inquiryProduct ? { type: "product", id: inquiryProduct.id, name: inquiryProduct.name, profile_id: inquiryProduct.profile_id } : null}
-        onClose={() => setInquiryProduct(null)}
+        onClose={() => { setInquiryProduct(null); setInquiryDraft(null); }}
+        restoreKey={inquiryDraft ? inquiryDraft.target.id : null}
+        initialValues={inquiryDraft}
       />
     </>
   );
@@ -136,8 +147,16 @@ export function TrendingProductsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
-  const navigate = useNavigate();
   const [inquiryProduct, setInquiryProduct] = useState(null);
+  const [inquiryDraft, setInquiryDraft] = useState(null);
+
+  useEffect(() => {
+    const draft = takeEnquiryDraft();
+    if (draft && getAuthToken()) {
+      setInquiryProduct(draft.target);
+      setInquiryDraft(draft);
+    }
+  }, []);
 
   useEffect(() => {
     getTrendingProducts(7)
@@ -242,7 +261,7 @@ export function TrendingProductsSection() {
                     <Link to={`/products/${prod.id}`} className="flex-1 py-1.5 bg-purple-600 text-white text-[11px] font-bold rounded-lg text-center hover:bg-purple-700 transition-colors no-underline">
                       View Details
                     </Link>
-                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!getAuthToken()) return navigate("/login"); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-purple-50 text-purple-700 text-[11px] font-bold rounded-lg hover:bg-purple-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
+                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setInquiryProduct(prod); }} className="flex-1 py-1.5 bg-purple-50 text-purple-700 text-[11px] font-bold rounded-lg hover:bg-purple-100 transition-colors cursor-pointer border-none flex items-center justify-center gap-1">
                       <Send className="w-3 h-3" />Inquiry
                     </button>
                   </div>
@@ -257,7 +276,9 @@ export function TrendingProductsSection() {
       <EnquiryFormModal
         open={!!inquiryProduct}
         target={inquiryProduct ? { type: "product", id: inquiryProduct.id, name: inquiryProduct.name, profile_id: inquiryProduct.profile_id } : null}
-        onClose={() => setInquiryProduct(null)}
+        onClose={() => { setInquiryProduct(null); setInquiryDraft(null); }}
+        restoreKey={inquiryDraft ? inquiryDraft.target.id : null}
+        initialValues={inquiryDraft}
       />
     </>
   );
@@ -430,10 +451,10 @@ export function TrendingVideosSection() {
           {videos.map((video) => (
             <div
               key={video.id}
-              className="flex-shrink-0 w-72 bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-lg transition-all cursor-pointer group"
+              className="flex-shrink-0 w-72 lg:w-[calc((100%_-_100px)/6)] bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-lg transition-all cursor-pointer group"
               onClick={() => setActiveVideo(video)}
             >
-              <div className="relative h-40 bg-gray-900">
+              <div className="relative h-40 lg:h-28 bg-gray-900">
                 {getThumbnail(video) ? (
                   <img src={getThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
                 ) : (

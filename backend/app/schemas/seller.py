@@ -46,6 +46,8 @@ class SellerDashboardStats(BaseModel):
     best_seller_products: int
     total_services: int
     active_services: int
+    # Owned businesses
+    total_businesses: int
     # Pipeline
     pending_approval_products: int
     pending_approval_services: int
@@ -63,6 +65,8 @@ class SellerDashboardStats(BaseModel):
     # Profile health
     profile_completion: int
     verification_status: str
+    # Recent activity feed (derived from this seller's own records)
+    recent_activity: list[dict] = []
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +354,7 @@ class SellerServiceCreate(BaseModel):
     category_id: int
     subcategory_id: int | None = None
     description: str | None = None
+    image_url: str | None = None
     price: float | None = None
     price_min: float | None = None
     price_max: float | None = None
@@ -386,6 +391,7 @@ class SellerServiceUpdate(BaseModel):
     category_id: int | None = None
     subcategory_id: int | None = None
     description: str | None = None
+    image_url: str | None = None
     price: float | None = None
     price_min: float | None = None
     price_max: float | None = None
@@ -424,6 +430,7 @@ class SellerServiceResponse(BaseModel):
     name: str
     slug: str | None = None
     description: str | None
+    image_url: str | None = None
     price_min: float | None
     price_max: float | None
     price_unit: str | None

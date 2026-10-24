@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.dependencies.database import get_db_session
 from app.models.biz_profile import BizProfile
 from app.models.category import Category
-from app.models.product import Product, ProductStatus
+from app.models.product import Product, ProductApprovalStatus, ProductStatus
 from app.models.service import BizService, ServiceApprovalStatus, ServiceStatus
 from app.models.service_listing import (
     ListingApprovalStatus,
@@ -107,6 +107,9 @@ def get_nearby_all(
     longitude: float = Query(..., ge=-180, le=180, description="User longitude"),
     radius_km: float = Query(default=5.0, gt=0, le=100, description="Search radius in km"),
     limit: int = Query(default=20, ge=1, le=100, description="Max results per group"),
+    category_id: int | None = Query(default=None, ge=1, description="Filter by category id"),
+    best_sellers_only: bool = Query(default=False, description="Products: only best sellers"),
+    sort: str = Query(default="nearest", pattern="^(nearest|newest)$", description="Sort order"),
     db: Session = Depends(get_db_session),
 ):
     """Nearby Products, Services and Businesses around a point.
@@ -126,44 +129,64 @@ def get_nearby_all(
     # ── Businesses ──────────────────────────────────────────────────────────
     biz_ref = profile_ref
     biz_dist = repo.distance_km(latitude, longitude, biz_ref).label("distance_km")
+    biz_order = BizProfile.created_at.desc() if sort == "newest" else biz_dist
+    biz_conditions = [
+        BizProfile.is_public.is_(True),
+        BizProfile.is_active.is_(True),
+        repo.has_location(biz_ref),
+        repo.within_radius(latitude, longitude, biz_ref, radius_km),
+    ]
+    if category_id is not None:
+        biz_conditions.append(BizProfile.category_id == category_id)
     biz_q = (
         select(BizProfile, biz_dist)
         .outerjoin(Category, BizProfile.category_id == Category.id)
         .options(joinedload(BizProfile.category))
-        .where(
-            BizProfile.is_public.is_(True),
-            BizProfile.is_active.is_(True),
-            repo.has_location(biz_ref),
-            repo.within_radius(latitude, longitude, biz_ref, radius_km),
-        )
-        .order_by(biz_dist)
+        .where(*biz_conditions)
+        .order_by(biz_order)
         .limit(limit)
     )
     biz_rows = db.execute(biz_q).unique().all()
     businesses = [
         {
-            "id": r[0].id,
-            "slug": r[0].slug,
-            "business_name": r[0].business_name,
-            "profile_type": r[0].profile_type,
-            "description": r[0].description,
-            "logo_url": r[0].logo_url,
-            "cover_image_url": r[0].cover_image_url,
-            "category_name": r[0].category.name if r[0].category else None,
-            "address": r[0].address,
-            "city": r[0].city,
-            "state": r[0].state,
-            "phone": r[0].phone,
-            "is_verified": r[0].is_verified,
-            "latitude": r[0].latitude,
-            "longitude": r[0].longitude,
-            "distance_km": round(r[1], 2),
-        }
+                "id": r[0].id,
+                "profile_id": r[0].id,
+                "category_id": r[0].category_id,
+                "slug": r[0].slug,
+                "business_name": r[0].business_name,
+                "profile_type": r[0].profile_type,
+                "description": r[0].description,
+                "logo_url": r[0].logo_url,
+                "cover_image_url": r[0].cover_image_url,
+                "category_name": r[0].category.name if r[0].category else None,
+                "address": r[0].address,
+                "city": r[0].city,
+                "state": r[0].state,
+                "phone": r[0].phone,
+                "is_verified": r[0].is_verified,
+                "latitude": r[0].latitude,
+                "longitude": r[0].longitude,
+                "distance_km": round(r[1], 2),
+            }
         for r in biz_rows
     ]
 
     # ── Products (located via their owning business) ─────────────────────────
     prod_dist = repo.distance_km(latitude, longitude, profile_ref).label("distance_km")
+    prod_order = Product.created_at.desc() if sort == "newest" else prod_dist
+    prod_conditions = [
+        Product.status == ProductStatus.ACTIVE.value,
+        Product.approval_status == ProductApprovalStatus.APPROVED.value,
+        Product.is_available.is_(True),
+        BizProfile.is_public.is_(True),
+        BizProfile.is_active.is_(True),
+        repo.has_location(profile_ref),
+        repo.within_radius(latitude, longitude, profile_ref, radius_km),
+    ]
+    if best_sellers_only:
+        prod_conditions.append(Product.is_best_seller.is_(True))
+    if category_id is not None:
+        prod_conditions.append(Product.category_id == category_id)
     prod_q = (
         select(Product, prod_dist)
         .join(BizProfile, Product.profile_id == BizProfile.id)
@@ -173,15 +196,8 @@ def get_nearby_all(
             joinedload(Product.biz_profile),
             joinedload(Product.category),
         )
-        .where(
-            Product.status == ProductStatus.ACTIVE.value,
-            Product.is_available.is_(True),
-            BizProfile.is_public.is_(True),
-            BizProfile.is_active.is_(True),
-            repo.has_location(profile_ref),
-            repo.within_radius(latitude, longitude, profile_ref, radius_km),
-        )
-        .order_by(prod_dist)
+        .where(*prod_conditions)
+        .order_by(prod_order)
         .limit(limit)
     )
     prod_rows = db.execute(prod_q).unique().all()
@@ -192,11 +208,15 @@ def get_nearby_all(
         products.append(
             {
                 "id": p.id,
+                "profile_id": p.profile_id,
+                "category_id": p.category_id,
                 "name": p.name,
                 "slug": p.slug,
                 "description": p.description,
                 "price": p.price,
                 "price_unit": p.price_unit,
+                "is_best_seller": p.is_best_seller,
+                "created_at": p.created_at,
                 "category_name": p.category.name if p.category else None,
                 "primary_image": images[0].image_url if images else None,
                 "business_name": p.biz_profile.business_name if p.biz_profile else None,
@@ -215,6 +235,24 @@ def get_nearby_all(
     # the service has none, so no coordinates are ever invented.
     svc_ref = repo.ref_for("biz_services", BizService).or_(profile_ref)
     svc_dist = repo.distance_km(latitude, longitude, svc_ref).label("distance_km")
+    svc_order = BizService.created_at.desc() if sort == "newest" else svc_dist
+    svc_conditions = [
+        BizService.status == ServiceStatus.ACTIVE.value,
+        BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
+        BizService.is_available.is_(True),
+        BizService.is_published.is_(True),
+        BizProfile.is_public.is_(True),
+        BizProfile.is_active.is_(True),
+        # Needs a complete coordinate pair, from the service or the business.
+        repo.has_location(svc_ref),
+        repo.within_radius(latitude, longitude, svc_ref, radius_km),
+        # Respect the provider's own service_radius when they set one: a service
+        # offered over 3 km must not appear in a buyer's 5 km results just
+        # because the shop sits nearby.
+        (BizService.service_radius.is_(None) | (svc_dist <= BizService.service_radius)),
+    ]
+    if category_id is not None:
+        svc_conditions.append(BizService.category_id == category_id)
     svc_q = (
         select(BizService, svc_dist)
         .join(BizProfile, BizService.profile_id == BizProfile.id)
@@ -223,18 +261,8 @@ def get_nearby_all(
             joinedload(BizService.biz_profile),
             joinedload(BizService.category),
         )
-        .where(
-            BizService.status == ServiceStatus.ACTIVE.value,
-            BizService.approval_status == ServiceApprovalStatus.APPROVED.value,
-            BizService.is_available.is_(True),
-            BizService.is_published.is_(True),
-            BizProfile.is_public.is_(True),
-            BizProfile.is_active.is_(True),
-            # Needs a complete coordinate pair, from the service or the business.
-            repo.has_location(svc_ref),
-            repo.within_radius(latitude, longitude, svc_ref, radius_km),
-        )
-        .order_by(svc_dist)
+        .where(*svc_conditions)
+        .order_by(svc_order)
         .limit(limit)
     )
     svc_rows = db.execute(svc_q).unique().all()
@@ -245,6 +273,10 @@ def get_nearby_all(
             {
                 "id": s.id,
                 "source": "biz_service",
+                "profile_id": s.profile_id,
+                "category_id": s.category_id,
+                "service_radius": s.service_radius,
+                "created_at": s.created_at,
                 "name": s.name,
                 "slug": s.slug,
                 "description": s.description,
@@ -283,6 +315,11 @@ def get_nearby_all(
             ServiceListing.is_active.is_(True),
             repo.has_location(list_ref),
             repo.within_radius(latitude, longitude, list_ref, radius_km),
+            # A provider's own service radius caps how far they will serve.
+            (
+                ServiceListing.service_radius_km.is_(None)
+                | (list_dist <= ServiceListing.service_radius_km)
+            ),
         )
         .order_by(list_dist)
         .limit(limit)
@@ -294,6 +331,8 @@ def get_nearby_all(
             {
                 "id": s.id,
                 "source": "service_listing",
+                "profile_id": s.profile_id,
+                "created_at": s.created_at,
                 "name": s.name,
                 "slug": s.slug,
                 "description": s.description,
@@ -311,7 +350,10 @@ def get_nearby_all(
                 "distance_km": round(dist, 2),
             }
         )
-    services.sort(key=lambda x: x["distance_km"])
+    if sort == "newest":
+        services.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    else:
+        services.sort(key=lambda x: x["distance_km"])
 
     return {
         "center": {"latitude": latitude, "longitude": longitude},

@@ -10,6 +10,7 @@ from app.dependencies.database import get_db_session
 from app.models.product import Product, ProductImage, ProductStatus, ProductApprovalStatus
 from app.models.biz_profile import BizProfile
 from app.models.category import Category, Subcategory
+from app.models.enquiry import Enquiry
 
 router = APIRouter(prefix="/api/public/products", tags=["public-products"])
 
@@ -344,6 +345,57 @@ def count_best_sellers(
         q = q.where(Product.category_id == category_id)
     total = db.execute(q).scalar() or 0
     return {"total": total}
+
+
+@router.get("/popular", response_model=list[ProductCard])
+def list_popular_products(
+    limit: int = Query(8, ge=1, le=24),
+    db: Session = Depends(get_db_session),
+):
+    """Return the most popular active products.
+
+    Popularity is derived only from real database signals: the number of buyer
+    enquiries a product has received, then the admin-controlled best-seller and
+    trending flags, then recency. No invented popularity scores.
+    """
+    enquiry_counts = (
+        select(
+            Enquiry.product_id.label("product_id"),
+            func.count(Enquiry.id).label("enquiry_count"),
+        )
+        .where(Enquiry.product_id.is_not(None))
+        .group_by(Enquiry.product_id)
+        .subquery()
+    )
+
+    q = (
+        select(Product)
+        .join(BizProfile, Product.profile_id == BizProfile.id)
+        .outerjoin(Category, Product.category_id == Category.id)
+        .outerjoin(enquiry_counts, enquiry_counts.c.product_id == Product.id)
+        .options(
+            joinedload(Product.biz_profile),
+            joinedload(Product.category),
+            joinedload(Product.subcategory),
+            joinedload(Product.images),
+        )
+        .where(
+            Product.status == ProductStatus.ACTIVE.value,
+            Product.approval_status == ProductApprovalStatus.APPROVED.value,
+            Product.is_available == True,
+            BizProfile.is_active == True,
+            BizProfile.is_public == True,
+        )
+        .order_by(
+            func.coalesce(enquiry_counts.c.enquiry_count, 0).desc(),
+            Product.is_best_seller.desc(),
+            Product.is_trending.desc(),
+            Product.created_at.desc(),
+        )
+        .limit(limit)
+    )
+    results = db.execute(q).unique().scalars().all()
+    return [_serialize_product(p) for p in results]
 
 
 @router.get("/list")

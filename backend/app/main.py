@@ -42,6 +42,7 @@ from app.routers.admin_enquiries import router as admin_enquiries_router
 from app.routers.services_listing import router as services_listing_router
 from app.routers.admin_enquiries import router as admin_enquiries_router
 from app.routers.more_value_adds import router as more_value_adds_router
+from app.routers.app_promo import router as app_promo_router
 from app.routers.notifications import router as notifications_router
 
 settings = get_settings()
@@ -98,6 +99,7 @@ app.include_router(admin_services_listing_router)
 app.include_router(services_listing_router)
 app.include_router(admin_enquiries_router)
 app.include_router(more_value_adds_router)
+app.include_router(app_promo_router)
 app.include_router(notifications_router)
 
 import os

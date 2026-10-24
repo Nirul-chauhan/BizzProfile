@@ -1,4 +1,5 @@
 import re
+from datetime import time as dt_time
 from urllib.parse import urlparse
 
 from sqlalchemy import select
@@ -11,7 +12,9 @@ from app.models.biz_profile import (
     MsmProfile,
     ProfileType,
 )
+from app.models.business_hours import BusinessHour
 from app.models.category import Category, Subcategory
+from app.models.verification import ProfileVerificationStatus
 
 
 CHILD_MODEL_MAP = {
@@ -286,3 +289,80 @@ class BizProfileService:
 
         self.db.delete(profile)
         self.db.commit()
+
+    # -----------------------------------------------------------------------
+    # Verification & Business Hours
+    # -----------------------------------------------------------------------
+
+    def submit_for_verification(self, profile_id: int, user_id: int) -> BizProfile:
+        """Move the seller's own business into the PENDING review queue.
+
+        A seller can never mark their own business VERIFIED; only an admin
+        decision (or the review workflow) may do that.
+        """
+        profile = self.get_by_id(profile_id)
+        if profile.user_id != user_id:
+            raise BizProfileError("You can only submit your own profiles.")
+        if profile.verification_status == ProfileVerificationStatus.VERIFIED.value:
+            raise BizProfileError("This business is already verified.")
+        profile.verification_status = ProfileVerificationStatus.PENDING.value
+        self.db.commit()
+        self.db.refresh(profile)
+        return profile
+
+    def list_business_hours(self, profile_id: int, user_id: int) -> list[BusinessHour]:
+        profile = self.get_by_id(profile_id)
+        if profile.user_id != user_id:
+            raise BizProfileError("You can only view your own business hours.")
+        return list(
+            self.db.execute(
+                select(BusinessHour)
+                .where(BusinessHour.biz_profile_id == profile_id)
+                .order_by(BusinessHour.day_of_week)
+            )
+            .scalars()
+            .all()
+        )
+
+    def upsert_business_hours(
+        self, profile_id: int, user_id: int, day_of_week: int, data: dict
+    ) -> BusinessHour:
+        profile = self.get_by_id(profile_id)
+        if profile.user_id != user_id:
+            raise BizProfileError("You can only edit your own business hours.")
+        if not (0 <= day_of_week <= 6):
+            raise BizProfileError("day_of_week must be between 0 (Mon) and 6 (Sun).")
+
+        hour = self.db.execute(
+            select(BusinessHour).where(
+                BusinessHour.biz_profile_id == profile_id,
+                BusinessHour.day_of_week == day_of_week,
+            )
+        ).scalars().first()
+
+        open_time = data.get("open_time")
+        close_time = data.get("close_time")
+        is_closed = data.get("is_closed", False)
+
+        if open_time is not None and isinstance(open_time, str):
+            open_time = dt_time(int(open_time.split(":")[0]), int(open_time.split(":")[1]))
+        if close_time is not None and isinstance(close_time, str):
+            close_time = dt_time(int(close_time.split(":")[0]), int(close_time.split(":")[1]))
+
+        if hour is None:
+            hour = BusinessHour(
+                biz_profile_id=profile_id,
+                day_of_week=day_of_week,
+                open_time=open_time,
+                close_time=close_time,
+                is_closed=is_closed,
+            )
+            self.db.add(hour)
+        else:
+            hour.open_time = open_time
+            hour.close_time = close_time
+            hour.is_closed = is_closed
+
+        self.db.commit()
+        self.db.refresh(hour)
+        return hour
