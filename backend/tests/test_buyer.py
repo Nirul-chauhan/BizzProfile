@@ -593,7 +593,7 @@ class TestBuyerEnquiries:
         assert resp.status_code == 201
         data = resp.json()
         assert data["message"] == "Is this available?"
-        assert data["status"] == "NEW"
+        assert data["status"] == "PENDING"
 
     def test_create_enquiry_for_service(self, client, db):
         email = _buyer_email()

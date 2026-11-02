@@ -138,7 +138,7 @@ const EMPTY_PRODUCT = {
 function Spinner() {
   return (
     <div className="flex items-center justify-center h-64">
-      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-emerald-500"></div>
+      <div className="animate-spin rounded-full h-8 w-8 border-2 border-emerald-500 border-t-transparent"></div>
     </div>
   );
 }
@@ -356,6 +356,9 @@ export default function SellerDashboard() {
   const [quotationForm, setQuotationForm] = useState({
     quantity: "",
     unit_price: "",
+    item_name: "",
+    availability: "",
+    message: "",
     description: "",
     terms: "",
     delivery_days: "",
@@ -363,6 +366,8 @@ export default function SellerDashboard() {
   });
   const [sendingQuotation, setSendingQuotation] = useState(false);
   const [enquiryMsg, setEnquiryMsg] = useState({ type: "", text: "" });
+  const [rejectMode, setRejectMode] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   // Requirements
   const [requirements, setRequirements] = useState([]);
@@ -498,7 +503,7 @@ export default function SellerDashboard() {
     let active = true;
     const poll = async () => {
       try {
-        const data = await sellerListEnquiries(1, 20, "NEW", activeProfileId || null);
+        const data = await sellerListEnquiries(1, 20, "PENDING", activeProfileId || null);
         if (!active) return;
         const list = data?.items || [];
         setNewEnquiries(list);
@@ -1019,13 +1024,22 @@ export default function SellerDashboard() {
     loadEnquiries(1, "");
   };
 
-  const handleUpdateEnquiryStatus = async (id, status) => {
+  const handleUpdateEnquiryStatus = async (id, status, reason = null) => {
     try {
-      await sellerUpdateEnquiryStatus(id, status);
+      const updated = await sellerUpdateEnquiryStatus(id, status, reason);
       await loadEnquiries(enquiryPage);
+      setRejectMode(false);
+      setRejectReason("");
       if (selectedEnquiry?.id === id) {
-        setSelectedEnquiry({ ...selectedEnquiry, status });
+        setSelectedEnquiry((prev) =>
+          prev && prev.id === id ? { ...prev, ...updated } : prev
+        );
       }
+      setEnquiryMsg({
+        type: "success",
+        text: status === "REJECTED" ? "Enquiry rejected." : "Enquiry accepted.",
+      });
+      setTimeout(() => setEnquiryMsg({ type: "", text: "" }), 3000);
     } catch (err) {
       setEnquiryMsg({ type: "error", text: err.message || "Failed to update status" });
     }
@@ -1034,6 +1048,9 @@ export default function SellerDashboard() {
   const EMPTY_QUOTATION_FORM = {
     quantity: "",
     unit_price: "",
+    item_name: "",
+    availability: "",
+    message: "",
     description: "",
     terms: "",
     delivery_days: "",
@@ -1045,6 +1062,7 @@ export default function SellerDashboard() {
   const quotationFormFor = (enquiry) => ({
     ...EMPTY_QUOTATION_FORM,
     quantity: enquiry?.quantity > 1 ? String(enquiry.quantity) : "",
+    item_name: enquiry?.product_name || enquiry?.service_name || "",
   });
 
   // Live total so the seller sees the figure the buyer will see.
@@ -1072,6 +1090,9 @@ export default function SellerDashboard() {
         quantity: qty,
         unit_price: price,
         amount: quotationTotal,
+        item_name: quotationForm.item_name || null,
+        availability: quotationForm.availability || null,
+        message: quotationForm.message || null,
         description: quotationForm.description || null,
         terms: quotationForm.terms || null,
         delivery_days:
@@ -1079,14 +1100,12 @@ export default function SellerDashboard() {
         valid_days:
           quotationForm.valid_days === "" ? null : parseInt(quotationForm.valid_days, 10),
       });
-      setEnquiryMsg({ type: "success", text: "Quotation sent!" });
+      setEnquiryMsg({ type: "success", text: "Response sent to the buyer!" });
       setQuotationForm(quotationFormFor(selectedEnquiry));
-      // The backend already moves the enquiry to QUOTED when a quotation is
-      // created, so no follow-up status update is needed here.
+      // The backend marks the enquiry RESPONDED when the reply is saved.
       await loadEnquiries(enquiryPage);
-      setSelectedEnquiry((prev) =>
-        prev && prev.id === selectedEnquiry.id ? { ...prev, status: "QUOTED" } : prev
-      );
+      const refreshed = await sellerGetEnquiry(selectedEnquiry.id);
+      if (refreshed) setSelectedEnquiry(refreshed);
       await loadDashboard();
       setTimeout(() => setEnquiryMsg({ type: "", text: "" }), 3000);
     } catch (err) {
@@ -1235,7 +1254,7 @@ export default function SellerDashboard() {
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-slate-50 flex">
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
@@ -1243,18 +1262,18 @@ export default function SellerDashboard() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-[#0a2540] flex flex-col shadow-xl transform transition-transform duration-200 ${
+        className={`fixed lg:sticky lg:top-0 inset-y-0 left-0 z-50 w-[280px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 flex flex-col border-r border-slate-800 shadow-2xl transform transition-transform duration-200 h-screen ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        <div className="p-5 border-b border-white/10 flex items-center justify-between">
+        <div className="p-6 border-b border-slate-800/60 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-emerald-400 to-teal-400 rounded-xl flex items-center justify-center shadow-lg">
-              <Briefcase className="w-5 h-5 text-white" />
+            <div className="w-11 h-11 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <Briefcase className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-white font-extrabold text-lg leading-tight">BizzProfile</h1>
-              <p className="text-emerald-300 text-[10px] font-medium">Seller Portal</p>
+              <h1 className="text-white font-extrabold text-base leading-tight tracking-tight">BizzProfiles</h1>
+              <p className="text-emerald-400 text-xs font-medium">Seller Portal</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
@@ -1312,7 +1331,7 @@ export default function SellerDashboard() {
           </div>
         </div>
 
-        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
@@ -1322,10 +1341,10 @@ export default function SellerDashboard() {
               <button
                 key={item.id}
                 onClick={() => navigateToSection(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer border-none ${
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer border-none ${
                   isActive
-                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
-                    : "text-emerald-200 hover:bg-white/10 hover:text-white bg-transparent"
+                    ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20"
+                    : "text-slate-300 hover:bg-slate-800/50 hover:text-white bg-transparent"
                 }`}
               >
                 <Icon className="w-5 h-5" />
@@ -1363,7 +1382,9 @@ export default function SellerDashboard() {
               <Menu className="w-5 h-5" />
             </button>
             <div>
-              <h2 className="text-lg font-bold text-gray-900 capitalize">{activeSection}</h2>
+              <h2 className="text-lg font-bold text-gray-900 capitalize">
+                {activeSection === "dashboard" ? "Seller Dashboard" : activeSection}
+              </h2>
               <p className="text-xs text-gray-500">
                 {user?.full_name || "Seller"}
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[9px] font-bold ml-1.5">SELLER</span>
@@ -2369,11 +2390,13 @@ export default function SellerDashboard() {
                         className="px-3 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
                       >
                         <option value="">All</option>
+                        <option value="PENDING">Pending</option>
+                        <option value="RESPONDED">Responded</option>
+                        <option value="ACCEPTED">Accepted</option>
+                        <option value="REJECTED">Rejected</option>
                         <option value="NEW">New</option>
                         <option value="CONTACTED">Contacted</option>
                         <option value="QUOTED">Quoted</option>
-                        <option value="ACCEPTED">Accepted</option>
-                        <option value="REJECTED">Rejected</option>
                         <option value="CLOSED">Closed</option>
                       </select>
                     </div>
@@ -2398,6 +2421,9 @@ export default function SellerDashboard() {
                                 onClick={() => {
                                   setSelectedEnquiry(e);
                                   setQuotationForm(quotationFormFor(e));
+                                  setRejectMode(false);
+                                  setRejectReason("");
+                                  setEnquiryMsg({ type: "", text: "" });
                                 }}
                                 className={`w-full p-4 text-left hover:bg-gray-50 transition-colors cursor-pointer border-none bg-transparent ${
                                   selectedEnquiry?.id === e.id ? "bg-emerald-50 border-l-4 border-l-emerald-500" : ""
@@ -2406,6 +2432,8 @@ export default function SellerDashboard() {
                                 <div className="flex items-center justify-between mb-1">
                                   <span className="text-sm font-bold text-gray-900">{e.buyer_name || e.buyer?.full_name || "Buyer"}</span>
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    e.status === "PENDING" ? "bg-amber-100 text-amber-700" :
+                                    e.status === "RESPONDED" ? "bg-violet-100 text-violet-700" :
                                     e.status === "NEW" ? "bg-blue-100 text-blue-700" :
                                     e.status === "CONTACTED" ? "bg-amber-100 text-amber-700" :
                                     e.status === "QUOTED" ? "bg-violet-100 text-violet-700" :
@@ -2417,7 +2445,11 @@ export default function SellerDashboard() {
                                     {e.status}
                                   </span>
                                 </div>
-                                <p className="text-xs text-gray-500 truncate">{e.subject || e.message || "No subject"}</p>
+                                <p className="text-[10px] font-semibold text-emerald-700 mb-0.5">{e.reference || `ENQ-${String(e.id).padStart(5, "0")}`}</p>
+                                <p className="text-xs text-gray-600 truncate">
+                                  {e.product_name || e.service_name || "General enquiry"}
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">{e.requirement || e.message || "No message"}</p>
                                 <p className="text-[10px] text-gray-400 mt-1">{e.created_at ? new Date(e.created_at).toLocaleDateString() : ""}</p>
                               </button>
                             ))}
@@ -2431,29 +2463,76 @@ export default function SellerDashboard() {
                     <div className={`${selectedEnquiry ? "" : "hidden lg:block"} lg:col-span-2`}>
                       {selectedEnquiry ? (
                         <div className="bg-white border border-gray-200/60 rounded-2xl p-6">
-                          <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-start justify-between mb-4 gap-3">
                             <div>
-                              <h4 className="text-lg font-bold text-gray-900">{selectedEnquiry.buyer_name || selectedEnquiry.buyer?.full_name || "Buyer"}</h4>
-                              <p className="text-xs text-gray-500">{selectedEnquiry.buyer?.email || ""}</p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="text-lg font-bold text-gray-900">{selectedEnquiry.buyer_name || selectedEnquiry.buyer?.full_name || "Buyer"}</h4>
+                                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[10px] font-bold">
+                                  {selectedEnquiry.reference || `ENQ-${String(selectedEnquiry.id).padStart(5, "0")}`}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  selectedEnquiry.status === "PENDING" ? "bg-amber-100 text-amber-700" :
+                                  selectedEnquiry.status === "RESPONDED" ? "bg-violet-100 text-violet-700" :
+                                  selectedEnquiry.status === "ACCEPTED" ? "bg-emerald-100 text-emerald-700" :
+                                  selectedEnquiry.status === "REJECTED" ? "bg-red-100 text-red-700" :
+                                  "bg-gray-100 text-gray-600"
+                                }`}>
+                                  {selectedEnquiry.status}
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5">{selectedEnquiry.buyer?.email || ""}</p>
                             </div>
                             <div className="flex items-center gap-2">
-                              <select
-                                value={selectedEnquiry.status}
-                                onChange={(e) => handleUpdateEnquiryStatus(selectedEnquiry.id, e.target.value)}
-                                className="px-3 py-1.5 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                              >
-                                <option value="NEW">New</option>
-                                <option value="CONTACTED">Contacted</option>
-                                <option value="QUOTED">Quoted</option>
-                                <option value="ACCEPTED">Accepted</option>
-                                <option value="REJECTED">Rejected</option>
-                                <option value="CLOSED">Closed</option>
-                              </select>
-                              <button onClick={() => setSelectedEnquiry(null)} className="p-1.5 text-gray-400 hover:text-gray-600 lg:hidden cursor-pointer border-none bg-transparent">
+                              {["PENDING", "NEW", "CONTACTED", "QUOTED", "RESPONDED"].includes(selectedEnquiry.status) && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateEnquiryStatus(selectedEnquiry.id, "ACCEPTED")}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 text-white text-xs font-bold rounded-xl hover:bg-emerald-600 transition-colors cursor-pointer border-none"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" /> Accept
+                                  </button>
+                                  <button
+                                    onClick={() => { setRejectMode((v) => !v); setRejectReason(""); }}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded-xl hover:bg-red-100 transition-colors cursor-pointer border-none"
+                                  >
+                                    <X className="w-3.5 h-3.5" /> Reject
+                                  </button>
+                                </>
+                              )}
+                              <button onClick={() => { setSelectedEnquiry(null); setRejectMode(false); }} className="p-1.5 text-gray-400 hover:text-gray-600 lg:hidden cursor-pointer border-none bg-transparent">
                                 <X className="w-4 h-4" />
                               </button>
                             </div>
                           </div>
+
+                          {rejectMode && (
+                            <div className="mb-4 p-4 bg-red-50 border border-red-100 rounded-xl">
+                              <label className="block text-xs font-bold text-red-700 mb-1">
+                                Reason for rejection (optional)
+                              </label>
+                              <textarea
+                                rows="2"
+                                value={rejectReason}
+                                onChange={(e) => setRejectReason(e.target.value)}
+                                className="w-full px-3 py-2 bg-white border-2 border-red-100 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none resize-none mb-2"
+                                placeholder="Tell the buyer why this enquiry cannot be fulfilled..."
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => { setRejectMode(false); setRejectReason(""); }}
+                                  className="flex-1 py-2 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateEnquiryStatus(selectedEnquiry.id, "REJECTED", rejectReason.trim() || null)}
+                                  className="flex-1 py-2 text-xs font-bold text-white bg-red-500 rounded-lg hover:bg-red-600 cursor-pointer border-none"
+                                >
+                                  Confirm Rejection
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           <div className="bg-gray-50 rounded-xl p-4 mb-4">
                             <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedEnquiry.message || "No message"}</p>
@@ -2471,18 +2550,70 @@ export default function SellerDashboard() {
                             )}
                           </div>
 
-                          {selectedEnquiry.product_name && (
-                            <div className="flex items-center gap-2 mb-4 text-sm text-gray-500">
-                              <Package className="w-4 h-4" />
-                              Product: <span className="font-medium text-gray-700">{selectedEnquiry.product_name}</span>
+                          <div className="grid grid-cols-2 gap-3 mb-4 text-xs">
+                            <div className="rounded-xl border border-gray-200/70 p-3">
+                              <p className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Product / Service</p>
+                              <p className="font-semibold text-gray-800 mt-0.5">
+                                {selectedEnquiry.product_name || selectedEnquiry.service_name || "General enquiry"}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-gray-200/70 p-3">
+                              <p className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Quantity</p>
+                              <p className="font-semibold text-gray-800 mt-0.5">{selectedEnquiry.quantity || 1}</p>
+                            </div>
+                            <div className="rounded-xl border border-gray-200/70 p-3">
+                              <p className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Submitted</p>
+                              <p className="font-semibold text-gray-800 mt-0.5">
+                                {selectedEnquiry.created_at ? new Date(selectedEnquiry.created_at).toLocaleString() : "—"}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-gray-200/70 p-3">
+                              <p className="font-bold text-gray-400 uppercase tracking-wide text-[10px]">Buyer Location</p>
+                              <p className="font-semibold text-gray-800 mt-0.5">
+                                {selectedEnquiry.buyer_location || selectedEnquiry.location || "—"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {selectedEnquiry.status === "REJECTED" && selectedEnquiry.rejection_reason && (
+                            <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-700">
+                              <span className="font-bold">Rejection reason:</span> {selectedEnquiry.rejection_reason}
                             </div>
                           )}
 
-                          {/* Send Quotation */}
+                          {selectedEnquiry.latest_response && (
+                            <div className="mb-4 p-4 bg-violet-50 border border-violet-100 rounded-xl">
+                              <p className="text-xs font-extrabold text-violet-700 uppercase tracking-wide mb-2">Response sent to buyer</p>
+                              <p className="text-sm text-gray-700">
+                                <span className="font-semibold">Item:</span>{" "}
+                                {selectedEnquiry.latest_response.item_name || selectedEnquiry.product_name || selectedEnquiry.service_name || "—"}
+                              </p>
+                              <p className="text-sm text-gray-700 mt-1">
+                                <span className="font-semibold">Price:</span> ₹{Number(selectedEnquiry.latest_response.amount || 0).toLocaleString()}
+                              </p>
+                              {selectedEnquiry.latest_response.availability && (
+                                <p className="text-sm text-gray-700 mt-1">
+                                  <span className="font-semibold">Availability:</span> {selectedEnquiry.latest_response.availability}
+                                </p>
+                              )}
+                              {selectedEnquiry.latest_response.delivery_display && (
+                                <p className="text-sm text-gray-700 mt-1">
+                                  <span className="font-semibold">Delivery:</span> {selectedEnquiry.latest_response.delivery_display}
+                                </p>
+                              )}
+                              {selectedEnquiry.latest_response.message && (
+                                <p className="text-sm text-gray-700 mt-1">
+                                  <span className="font-semibold">Message:</span> {selectedEnquiry.latest_response.message}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Reply to Buyer */}
                           <div className="border-t border-gray-200 pt-4 mt-4">
-                            <h5 className="text-sm font-bold text-gray-900 mb-1">Send Quotation</h5>
+                            <h5 className="text-sm font-bold text-gray-900 mb-1">Reply to Buyer</h5>
                             <p className="text-xs text-gray-500 mb-3">
-                              Build a quote the buyer can accept or reject.
+                              Send product/service details, price, availability and timeline. The buyer sees this on their enquiry.
                             </p>
 
                             {selectedEnquiry.quantity > 1 && (
@@ -2499,6 +2630,24 @@ export default function SellerDashboard() {
                                   : ""}
                               </div>
                             )}
+
+                            <div className="mb-3">
+                              <label className="block text-xs font-bold text-gray-700 mb-1">
+                                Product / Service Name
+                              </label>
+                              <input
+                                type="text"
+                                value={quotationForm.item_name}
+                                onChange={(e) =>
+                                  setQuotationForm({
+                                    ...quotationForm,
+                                    item_name: e.target.value,
+                                  })
+                                }
+                                className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                                placeholder="e.g. 9W LED Bulb"
+                              />
+                            </div>
 
                             <div className="grid grid-cols-2 gap-3 mb-3">
                               <div>
@@ -2609,7 +2758,31 @@ export default function SellerDashboard() {
                                 })
                               }
                               className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none mb-3"
-                              placeholder="Description — e.g. 9W LED bulbs, energy efficient"
+                              placeholder="Description & specifications — e.g. 9W LED bulbs, energy efficient"
+                            />
+                            <textarea
+                              rows="2"
+                              value={quotationForm.availability}
+                              onChange={(e) =>
+                                setQuotationForm({
+                                  ...quotationForm,
+                                  availability: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none mb-3"
+                              placeholder="Availability — e.g. 500 units in stock, ready to dispatch"
+                            />
+                            <textarea
+                              rows="2"
+                              value={quotationForm.message}
+                              onChange={(e) =>
+                                setQuotationForm({
+                                  ...quotationForm,
+                                  message: e.target.value,
+                                })
+                              }
+                              className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none mb-3"
+                              placeholder="Additional message for the buyer..."
                             />
                             <textarea
                               rows="2"
@@ -2628,7 +2801,7 @@ export default function SellerDashboard() {
                               disabled={sendingQuotation}
                               className="w-full px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-xl hover:from-emerald-600 hover:to-teal-700 transition-all shadow-md disabled:opacity-50 cursor-pointer border-none"
                             >
-                              {sendingQuotation ? "Sending..." : "Send Quotation"}
+                              {sendingQuotation ? "Sending..." : "Send Response to Buyer"}
                             </button>
                           </div>
                         </div>

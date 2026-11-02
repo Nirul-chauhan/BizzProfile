@@ -49,6 +49,11 @@ class Quotation(Base):
     # like a real document instead of a single opaque number.
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Seller reply details. These make the quotation read as a complete
+    # response to the enquiry rather than a bare price.
+    item_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    availability: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # NULL unit_price means the quote is a lump sum (no per-unit breakdown).
     unit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     # None means "not promised" rather than "same day".

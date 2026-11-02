@@ -20,9 +20,13 @@ class Message(Base):
         Index("ix_messages_sender_id", "sender_id"),
         Index("ix_messages_receiver_id", "receiver_id"),
         Index("ix_messages_is_read", "is_read"),
+        Index("ix_messages_enquiry_id", "enquiry_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enquiry_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("enquiries.id", ondelete="SET NULL"), nullable=True
+    )
     sender_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
@@ -35,6 +39,7 @@ class Message(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
 
+    enquiry: Mapped["Enquiry | None"] = relationship("Enquiry", passive_deletes=True)
     sender: Mapped["User"] = relationship(
         "User", foreign_keys=[sender_id], passive_deletes=True
     )

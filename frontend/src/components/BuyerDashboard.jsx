@@ -689,7 +689,7 @@ export default function BuyerDashboard() {
   ];
 
   const sectionLabel = {
-    dashboard: "Dashboard",
+    dashboard: "Buyer Dashboard",
     profile: "My Profile",
     browse: "Browse",
     requirements: "My Requirements",
@@ -703,7 +703,7 @@ export default function BuyerDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -715,22 +715,22 @@ export default function BuyerDashboard() {
       <div className="flex min-h-screen">
         {/* Sidebar */}
         <aside
-          className={`fixed lg:sticky top-0 left-0 z-50 w-64 bg-[#0a2540] flex flex-col shadow-xl h-screen transition-transform lg:translate-x-0 ${
+          className={`fixed lg:sticky top-0 left-0 z-50 w-[280px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 flex flex-col border-r border-slate-800 shadow-2xl h-screen transition-transform lg:translate-x-0 ${
             sidebarOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
-          <div className="p-5 border-b border-white/10">
+          <div className="p-6 border-b border-slate-800/60">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-xl flex items-center justify-center shadow-lg">
-                  <Building2 className="w-5 h-5 text-white" />
+                <div className="w-11 h-11 bg-gradient-to-br from-rose-500 to-pink-600 rounded-xl flex items-center justify-center shadow-lg shadow-rose-500/20">
+                  <Building2 className="w-6 h-6 text-white" />
                 </div>
-                <div>
-                  <h1 className="text-white font-extrabold text-lg leading-tight">
-                    BizzProfile
-                  </h1>
-                  <p className="text-blue-300 text-[10px] font-medium">Buyer Portal</p>
-                </div>
+            <div>
+              <h1 className="text-white font-bold text-base leading-tight tracking-tight">
+                BizzProfiles
+              </h1>
+              <p className="text-slate-400 text-xs">Buyer Portal</p>
+            </div>
               </div>
 
               {/* Quotation notification bell */}
@@ -801,7 +801,7 @@ export default function BuyerDashboard() {
             </div>
           </div>
 
-          <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
+          <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.id;
@@ -813,10 +813,10 @@ export default function BuyerDashboard() {
                     setActiveSection(item.id);
                     setSidebarOpen(false);
                   }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer border-none ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer border-none ${
                     isActive
-                      ? "bg-blue-500 text-white shadow-lg shadow-blue-500/30"
-                      : "text-blue-200 hover:bg-white/10 hover:text-white bg-transparent"
+                      ? "bg-rose-600 text-white shadow-md shadow-rose-600/20"
+                      : "text-slate-300 hover:bg-slate-800/50 hover:text-white bg-transparent"
                   }`}
                 >
                   <Icon className="w-5 h-5" />
@@ -831,10 +831,10 @@ export default function BuyerDashboard() {
             })}
           </nav>
 
-          <div className="p-3 border-t border-white/10">
+          <div className="p-3 border-t border-slate-800">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-300 hover:bg-red-500/20 hover:text-red-200 transition-all cursor-pointer border-none bg-transparent"
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all cursor-pointer border-none bg-transparent"
             >
               <LogOut className="w-5 h-5" />
               Logout

@@ -124,16 +124,18 @@ export default function App() {
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/customer/:section" element={<CustomerSections />} />
-          <Route path="/admin/:section" element={<AdminDashboard />} />
-          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/:section" element={<ProtectedRoute allowedRoles={["ADMIN"]}><AdminDashboard /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute allowedRoles={["ADMIN"]}><AdminDashboard /></ProtectedRoute>} />
+          <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={["ADMIN"]}><AdminDashboard /></ProtectedRoute>} />
+          <Route path="/admin/dashboard/:section" element={<ProtectedRoute allowedRoles={["ADMIN"]}><AdminDashboard /></ProtectedRoute>} />
         </Route>
         <Route path="/customer/dashboard" element={<CustomerDashboard />} />
         <Route path="/customer/dashboard/:section" element={<CustomerDashboard />} />
         <Route path="/customer/form" element={<CustomerForm />} />
         <Route path="/buyer/dashboard" element={<BuyerDashboard />} />
         <Route path="/buyer/dashboard/:section" element={<BuyerDashboard />} />
-        <Route path="/seller/dashboard" element={<ProtectedRoute allowedRoles={["SELLER", "ENDUSER"]}><SellerDashboard /></ProtectedRoute>} />
-        <Route path="/seller/dashboard/:section" element={<ProtectedRoute allowedRoles={["SELLER", "ENDUSER"]}><SellerDashboard /></ProtectedRoute>} />
+        <Route path="/seller/dashboard" element={<ProtectedRoute allowedRoles={["SELLER", "ENDUSER", "ADMIN"]}><SellerDashboard /></ProtectedRoute>} />
+        <Route path="/seller/dashboard/:section" element={<ProtectedRoute allowedRoles={["SELLER", "ENDUSER", "ADMIN"]}><SellerDashboard /></ProtectedRoute>} />
         <Route path="/enduser" element={<EndUserView />} />
         <Route path="/enduser/business/:slug" element={<BusinessDetail />} />
       </Routes>

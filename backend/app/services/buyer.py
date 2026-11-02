@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.biz_profile import BizProfile
 from app.models.product import Product
 from app.models.service import BizService
-from app.models.enquiry import Enquiry
+from app.models.enquiry import Enquiry, EnquiryStatus
 from app.models.quotation import Quotation, QuotationStatus
 from app.models.requirement import Requirement
 from app.models.message import Message
@@ -59,7 +59,7 @@ class BuyerService:
         total = self.db.execute(count_q).scalar() or 0
         items = self.db.execute(
             query.offset(offset).limit(page_size)
-        ).scalars().all()
+        ).unique().scalars().all()
         return {
             "items": list(items),
             "total": total,
@@ -252,7 +252,7 @@ class BuyerService:
             location=(data.get("location") or "").strip() or None,
             message=data["message"].strip(),
             quantity=data.get("quantity", 1),
-            status="NEW",
+            status=EnquiryStatus.PENDING.value,
         )
         self.db.add(enquiry)
         self.db.flush()
@@ -280,13 +280,24 @@ class BuyerService:
                 joinedload(Enquiry.biz_profile),
                 joinedload(Enquiry.product),
                 joinedload(Enquiry.service),
+                joinedload(Enquiry.quotations),
             )
             .order_by(Enquiry.created_at.desc())
         )
         return self._paginate(query, page, page_size)
 
     def get_enquiry(self, user_id: int, enquiry_id: int) -> Enquiry:
-        enquiry = self.db.get(Enquiry, enquiry_id)
+        enquiry = self.db.execute(
+            select(Enquiry)
+            .where(Enquiry.id == enquiry_id)
+            .options(
+                joinedload(Enquiry.seller),
+                joinedload(Enquiry.biz_profile),
+                joinedload(Enquiry.product),
+                joinedload(Enquiry.service),
+                joinedload(Enquiry.quotations),
+            )
+        ).unique().scalars().first()
         if enquiry is None:
             raise BuyerError("Enquiry not found.")
         if enquiry.buyer_id != user_id:
@@ -541,17 +552,25 @@ class BuyerService:
             "page_size": page_size,
         }
 
-    def send_message(self, user_id: int, receiver_id: int, content: str) -> Message:
+    def send_message(self, user_id: int, receiver_id: int, content: str, enquiry_id: int | None = None) -> Message:
         receiver = self.db.get(User, receiver_id)
         if receiver is None:
             raise BuyerError("The specified receiver does not exist.")
         if receiver_id == user_id:
             raise BuyerError("Cannot send message to yourself.")
 
+        if enquiry_id is not None:
+            enquiry = self.db.get(Enquiry, enquiry_id)
+            if enquiry is None:
+                raise BuyerError("Enquiry not found.")
+            if enquiry.buyer_id != user_id and enquiry.seller_id != receiver_id:
+                raise BuyerError("You are not authorized to message for this enquiry.")
+
         msg = Message(
             sender_id=user_id,
             receiver_id=receiver_id,
             content=content.strip(),
+            enquiry_id=enquiry_id,
         )
         self.db.add(msg)
         self.db.commit()

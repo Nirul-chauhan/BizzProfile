@@ -628,18 +628,19 @@ export default function AdminDashboard() {
     : [];
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-[#f8fafc]">
       {/* Sidebar */}
-      <aside className="w-64 flex flex-col sticky top-0 h-screen" style={{ backgroundColor: "#0a192f" }}>
+      {/* Sidebar */}
+      <aside className="w-[280px] flex flex-col sticky top-0 h-screen bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border-r border-slate-800">
         {/* Logo */}
-        <div className="p-6 border-b border-white/10">
+        <div className="p-6 border-b border-slate-800/60">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-sky-400 to-blue-500 rounded-xl flex items-center justify-center shadow-lg">
-              <ShieldCheck className="w-5 h-5 text-white" />
+            <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <ShieldCheck className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h6 className="font-bold text-white text-sm">BizzProfiles</h6>
-              <p className="text-xs text-sky-300">Admin Panel</p>
+              <h6 className="font-extrabold text-white text-base tracking-tight">BizzProfiles</h6>
+              <p className="text-xs text-slate-400 font-medium">Admin Control Panel</p>
             </div>
           </div>
         </div>
@@ -653,37 +654,46 @@ export default function AdminDashboard() {
               <button
                 key={item.id}
                 onClick={() => navigate(`/admin/${item.id}`)}
-                className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer border-none ${
+                className={`group flex items-center gap-3 w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer border-none ${
                   isActive
-                    ? "bg-sky-500 text-white shadow-lg shadow-sky-500/30"
-                    : "text-gray-400 hover:bg-white/10 hover:text-white bg-transparent"
+                    ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-600/25"
+                    : "text-slate-400 hover:bg-slate-800/60 hover:text-white bg-transparent"
                 }`}
               >
-                <Icon className="w-5 h-5" /> {item.label}
+                <Icon className={`w-5 h-5 transition-transform duration-200 ${isActive ? "" : "group-hover:scale-110"}`} />
+                <span className="flex-1 text-left">{item.label}</span>
+                {isActive && <div className="w-1.5 h-1.5 rounded-full bg-white/80"></div>}
               </button>
             );
           })}
         </nav>
 
         {/* Bottom Utility */}
-        <div className="p-4 border-t border-white/10">
+        <div className="p-4 border-t border-slate-800/60 space-y-1">
           {BOTTOM_NAV.map((item) => {
             const Icon = item.icon;
+            const isActive = activeNav === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => navigate(`/admin/${item.id}`)}
-                className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:bg-white/10 hover:text-white transition-all cursor-pointer border-none bg-transparent mb-1"
+                className={`group flex items-center gap-3 w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer border-none ${
+                  isActive
+                    ? "bg-slate-800 text-white"
+                    : "text-slate-400 hover:bg-slate-800/60 hover:text-white bg-transparent"
+                }`}
               >
-                <Icon className="w-5 h-5" /> {item.label}
+                <Icon className="w-5 h-5" />
+                <span className="flex-1 text-left">{item.label}</span>
               </button>
             );
           })}
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-all cursor-pointer border-none bg-transparent"
+            className="group flex items-center gap-3 w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all duration-200 cursor-pointer border-none bg-transparent"
           >
-            <LogOut className="w-5 h-5" /> Logout
+            <LogOut className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
+            <span className="flex-1 text-left">Logout</span>
           </button>
         </div>
       </aside>
@@ -691,13 +701,15 @@ export default function AdminDashboard() {
       {/* Main Content */}
       <main className="flex-1">
         {/* Top Bar */}
-        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-gray-200/60 px-8 py-4">
+        <header className="sticky top-0 z-30 bg-white border-b border-gray-200 px-8 py-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold text-gray-900 capitalize">{activeNav}</h1>
-              <p className="text-xs text-gray-500">
-                {user?.full_name || "Admin"}
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-sky-100 text-sky-700 rounded text-[9px] font-bold ml-1.5">ADMIN</span>
+              <h1 className="text-lg font-bold text-gray-900 capitalize">
+                {activeNav === "dashboard" ? "Administration" : activeNav.replace(/-/g, ' ')}
+              </h1>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Welcome back, {user?.full_name || "Admin"}
+                <span className="inline-flex items-center px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[9px] font-semibold ml-2 border border-blue-100">ADMIN</span>
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -775,7 +787,7 @@ export default function AdminDashboard() {
           </div>
         </header>
 
-        <div className="p-8">
+        <div className="p-6 lg:p-8">
           {loading ? (
             <div className="flex items-center justify-center h-64">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div>
@@ -906,11 +918,18 @@ export default function AdminDashboard() {
           ) : activeNav === "users" ? (
             /* Users Section */
             <div>
-              <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden">
-                <div className="p-6 border-b border-gray-200/60 bg-gradient-to-r from-blue-500 to-indigo-600">
-                  <h3 className="text-lg font-bold text-white">All Users</h3>
-                  <p className="text-sm text-blue-100">{usersList.length} users registered</p>
-                </div>
+                <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                  <div className="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-slate-50 to-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">All Users</h3>
+                        <p className="text-sm text-gray-500 mt-1">{usersList.length} registered users</p>
+                      </div>
+                      <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
+                        <Users className="w-5 h-5 text-blue-600" />
+                      </div>
+                    </div>
+                  </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -960,11 +979,18 @@ export default function AdminDashboard() {
           ) : activeNav === "customers" ? (
             /* Customers Section */
             <div>
-              <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden">
-                <div className="p-6 border-b border-gray-200/60 bg-gradient-to-r from-emerald-500 to-teal-600">
-                  <h3 className="text-lg font-bold text-white">Customers</h3>
-                  <p className="text-sm text-emerald-100">{customersList.length} customers registered</p>
-                </div>
+                <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                  <div className="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-slate-50 to-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">Customers</h3>
+                        <p className="text-sm text-gray-500 mt-1">{customersList.length} registered customers</p>
+                      </div>
+                      <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center">
+                        <UserCheck className="w-5 h-5 text-emerald-600" />
+                      </div>
+                    </div>
+                  </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -1015,11 +1041,18 @@ export default function AdminDashboard() {
           ) : activeNav === "endusers" ? (
             /* EndUsers Section */
             <div>
-              <div className="bg-white border border-gray-200/60 rounded-2xl overflow-hidden">
-                <div className="p-6 border-b border-gray-200/60 bg-gradient-to-r from-violet-500 to-purple-600">
-                  <h3 className="text-lg font-bold text-white">End Users</h3>
-                  <p className="text-sm text-violet-100">{endUsersList.length} end users registered</p>
-                </div>
+                <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                  <div className="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-slate-50 to-white">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">End Users</h3>
+                        <p className="text-sm text-gray-500 mt-1">{endUsersList.length} registered end users</p>
+                      </div>
+                      <div className="w-10 h-10 bg-violet-50 rounded-lg flex items-center justify-center">
+                        <UserX className="w-5 h-5 text-violet-600" />
+                      </div>
+                    </div>
+                  </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>

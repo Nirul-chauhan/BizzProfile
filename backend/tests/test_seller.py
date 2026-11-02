@@ -1299,9 +1299,9 @@ class TestSellerQuotations:
             headers=_auth_header(seller_token),
         )
 
-        # Creating a quotation moves the enquiry to QUOTED
+        # Creating a response moves the enquiry to RESPONDED
         resp = client.get(f"/api/seller/enquiries/{enquiry.id}", headers=_auth_header(seller_token))
-        assert resp.json()["status"] == "QUOTED"
+        assert resp.json()["status"] == "RESPONDED"
 
     def test_list_quotations(self, client, db):
         seller_token, buyer_token, enquiry = self._setup_enquiry(client, db)

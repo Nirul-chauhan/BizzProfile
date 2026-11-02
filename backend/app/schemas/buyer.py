@@ -235,8 +235,29 @@ class BuyerEnquiryCreate(BaseModel):
         return v
 
 
+class BuyerSellerResponse(BaseModel):
+    """The seller's persisted reply to an enquiry (backed by a quotation)."""
+
+    id: int
+    amount: float
+    quantity: int
+    unit_price: float | None = None
+    item_name: str | None = None
+    description: str | None = None
+    availability: str | None = None
+    delivery_days: int | None = None
+    delivery_display: str | None = None
+    message: str | None = None
+    terms: str | None = None
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class BuyerEnquiryResponse(BaseModel):
     id: int
+    reference: str
     buyer_id: int
     seller_id: int
     profile_id: int
@@ -248,10 +269,13 @@ class BuyerEnquiryResponse(BaseModel):
     message: str
     quantity: int
     status: str
+    rejection_reason: str | None = None
+    responded_at: datetime | None = None
     business_name: str | None = None
     product_name: str | None = None
     service_name: str | None = None
     seller_name: str | None = None
+    latest_response: BuyerSellerResponse | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -304,6 +328,9 @@ class BuyerQuotationResponse(BaseModel):
     amount: float
     quantity: int
     unit_price: float | None = None
+    item_name: str | None = None
+    availability: str | None = None
+    message: str | None = None
     delivery_days: int | None = None
     valid_days: int | None = None
     description: str | None
@@ -346,6 +373,7 @@ class BuyerQuotationListResponse(BaseModel):
 class BuyerMessageCreate(BaseModel):
     receiver_id: int
     content: str
+    enquiry_id: int | None = None
 
     @field_validator("content")
     @classmethod
@@ -358,6 +386,7 @@ class BuyerMessageCreate(BaseModel):
 
 class BuyerMessageResponse(BaseModel):
     id: int
+    enquiry_id: int | None = None
     sender_id: int
     receiver_id: int
     content: str

@@ -156,6 +156,14 @@ export default function Header() {
         : roleName === "BUYER" || roleName === "CUSTOMER"
           ? "BUYER"
           : "USER";
+  const dashboardLabel =
+    roleName === "ADMIN"
+      ? "Administration"
+      : roleName === "SELLER" || roleName === "ENDUSER"
+        ? "Seller Dashboard"
+        : roleName === "BUYER" || roleName === "CUSTOMER"
+          ? "Buyer Dashboard"
+          : "My Dashboard";
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50">
@@ -349,7 +357,7 @@ export default function Header() {
                       >
                         <UserCircle className="w-5 h-5 text-gray-500" />
                         <span className="text-sm font-medium text-gray-700">
-                          My Dashboard
+                          {dashboardLabel}
                         </span>
                       </button>
                       <button

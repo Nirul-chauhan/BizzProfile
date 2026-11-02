@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.dependencies.database import get_db_session
-from app.dependencies.auth import require_enduser
+from app.dependencies.auth import require_enduser, require_seller, require_seller_or_admin
 from app.models.user import User
 from app.services.seller import SellerService, SellerError
 from app.schemas.seller import (
@@ -36,6 +36,7 @@ from app.schemas.seller import (
 )
 from app.models.product import ProductApprovalStatus
 from app.models.service import ServiceApprovalStatus
+from app.models.enquiry import EnquiryStatus
 
 router = APIRouter(prefix="/api/seller", tags=["seller"])
 
@@ -537,15 +538,19 @@ def delete_service(
 def list_enquiries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    status_filter: str | None = Query(None, alias="status"),
-    profile_id: int | None = Query(None, description="Scope to one owned business"),
-    current_user: User = Depends(require_enduser),
+    status: EnquiryStatus | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
+    current_user: User = Depends(require_seller_or_admin),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
         return svc.list_enquiries(
-            current_user.id, page, page_size, status_filter, profile_id
+            current_user.id,
+            page,
+            page_size,
+            status.value if status else None,
+            profile_id,
         )
     except SellerError as e:
         _handle_seller_error(e)
@@ -573,7 +578,9 @@ def update_enquiry_status(
 ):
     svc = _get_service(db)
     try:
-        return svc.update_enquiry_status(current_user.id, enquiry_id, data.status)
+        return svc.update_enquiry_status(
+            current_user.id, enquiry_id, data.status, data.rejection_reason
+        )
     except SellerError as e:
         _handle_seller_error(e)
 
@@ -585,12 +592,12 @@ def update_enquiry_status(
 @router.post("/quotations", response_model=SellerQuotationResponse, status_code=status.HTTP_201_CREATED)
 def create_quotation(
     data: SellerQuotationCreate,
-    current_user: User = Depends(require_enduser),
+    current_user: User = Depends(require_seller),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
-        return svc.create_quotation(current_user.id, data.model_dump())
+        return svc.create_quotation(current_user.id, data.model_dump(exclude_none=True))
     except SellerError as e:
         _handle_seller_error(e)
 
@@ -701,12 +708,12 @@ def get_messages(
 @router.post("/messages", response_model=SellerMessageResponse, status_code=status.HTTP_201_CREATED)
 def send_message(
     data: SellerMessageCreate,
-    current_user: User = Depends(require_enduser),
+    current_user: User = Depends(require_seller),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
-        return svc.send_message(current_user.id, data.receiver_id, data.content)
+        return svc.send_message(current_user.id, data.receiver_id, data.content, data.enquiry_id)
     except SellerError as e:
         _handle_seller_error(e)
 

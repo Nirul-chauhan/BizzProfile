@@ -953,6 +953,7 @@ class SellerService:
                     joinedload(Enquiry.biz_profile),
                     joinedload(Enquiry.product),
                     joinedload(Enquiry.service),
+                    joinedload(Enquiry.quotations),
                 )
                 .order_by(Enquiry.created_at.desc())
                 .offset(offset)
@@ -972,19 +973,38 @@ class SellerService:
         }
 
     def get_enquiry(self, user_id: int, enquiry_id: int) -> Enquiry:
-        enquiry = self.db.get(Enquiry, enquiry_id)
+        enquiry = self.db.execute(
+            select(Enquiry)
+            .where(Enquiry.id == enquiry_id)
+            .options(
+                joinedload(Enquiry.buyer),
+                joinedload(Enquiry.seller),
+                joinedload(Enquiry.biz_profile),
+                joinedload(Enquiry.product),
+                joinedload(Enquiry.service),
+                joinedload(Enquiry.quotations),
+            )
+        ).unique().scalars().first()
         if enquiry is None:
             raise SellerError("Enquiry not found.")
         self._require_owned_profile(enquiry.profile_id, user_id)
         return enquiry
 
-    def update_enquiry_status(self, user_id: int, enquiry_id: int, new_status: str) -> Enquiry:
+    def update_enquiry_status(
+        self,
+        user_id: int,
+        enquiry_id: int,
+        new_status: str,
+        rejection_reason: str | None = None,
+    ) -> Enquiry:
         enquiry = self.get_enquiry(user_id, enquiry_id)
         allowed_transitions = {
-            "NEW": ["CONTACTED", "CLOSED"],
-            "CONTACTED": ["QUOTED", "CLOSED"],
-            "QUOTED": ["CLOSED"],
-            "ACCEPTED": ["CLOSED"],
+            "PENDING": ["ACCEPTED", "REJECTED", "CONTACTED", "CLOSED"],
+            "NEW": ["ACCEPTED", "REJECTED", "CONTACTED", "CLOSED"],
+            "CONTACTED": ["ACCEPTED", "REJECTED", "QUOTED", "CLOSED"],
+            "QUOTED": ["ACCEPTED", "REJECTED", "RESPONDED", "CLOSED"],
+            "RESPONDED": ["ACCEPTED", "REJECTED", "CLOSED"],
+            "ACCEPTED": ["RESPONDED", "REJECTED", "CLOSED"],
             "REJECTED": ["CLOSED"],
             "CLOSED": [],
         }
@@ -994,7 +1014,49 @@ class SellerService:
                 f"Cannot transition from {enquiry.status} to {new_status}. "
                 f"Allowed: {current}"
             )
+
         enquiry.status = new_status
+        if new_status == EnquiryStatus.REJECTED.value:
+            reason = (rejection_reason or "").strip() or None
+            enquiry.rejection_reason = reason
+            enquiry.responded_at = datetime.now(timezone.utc)
+            create_notification(
+                self.db,
+                user_id=enquiry.buyer_id,
+                type=NotificationType.ENQUIRY.value,
+                title="Enquiry rejected",
+                message=(
+                    f"{enquiry.business_name or 'The seller'} rejected your enquiry "
+                    f"{enquiry.reference}."
+                    + (f" Reason: {reason}" if reason else "")
+                ),
+                enquiry_id=enquiry.id,
+            )
+            # Persist the rejection message in the conversation as well, so the
+            # buyer sees it in Messages without needing to open the enquiry.
+            if reason:
+                self.db.add(
+                    Message(
+                        enquiry_id=enquiry.id,
+                        sender_id=user_id,
+                        receiver_id=enquiry.buyer_id,
+                        content=f"Enquiry {enquiry.reference} rejected: {reason}",
+                    )
+                )
+        elif new_status == EnquiryStatus.ACCEPTED.value:
+            enquiry.responded_at = datetime.now(timezone.utc)
+            create_notification(
+                self.db,
+                user_id=enquiry.buyer_id,
+                type=NotificationType.ENQUIRY.value,
+                title="Enquiry accepted",
+                message=(
+                    f"{enquiry.business_name or 'The seller'} accepted your enquiry "
+                    f"{enquiry.reference}. You will receive their response shortly."
+                ),
+                enquiry_id=enquiry.id,
+            )
+
         self.db.commit()
         self.db.refresh(enquiry)
         return enquiry
@@ -1010,6 +1072,14 @@ class SellerService:
 
         self._require_owned_profile(enquiry.profile_id, user_id)
 
+        if enquiry.status in (
+            EnquiryStatus.REJECTED.value,
+            EnquiryStatus.CLOSED.value,
+        ):
+            raise SellerError(
+                "Cannot send a response for a rejected or closed enquiry."
+            )
+
         quantity, unit_price, amount = self._resolve_pricing(data)
 
         # Validity can be given as a window ("7 days") or as an absolute date.
@@ -1019,6 +1089,10 @@ class SellerService:
         if valid_until is None and valid_days is not None:
             valid_until = datetime.now(timezone.utc) + timedelta(days=valid_days)
 
+        item_name = (data.get("item_name") or "").strip() or (
+            enquiry.product_name or enquiry.service_name
+        )
+
         quotation = Quotation(
             enquiry_id=enquiry.id,
             seller_id=user_id,
@@ -1026,6 +1100,9 @@ class SellerService:
             amount=amount,
             quantity=quantity,
             unit_price=unit_price,
+            item_name=item_name,
+            availability=(data.get("availability") or "").strip() or None,
+            message=(data.get("message") or "").strip() or None,
             delivery_days=data.get("delivery_days"),
             valid_days=valid_days,
             description=data.get("description"),
@@ -1038,22 +1115,19 @@ class SellerService:
         self.db.add(quotation)
         self.db.flush()
 
-        # Creating a quotation moves the enquiry into the QUOTED stage.
-        if enquiry.status in (
-            EnquiryStatus.NEW.value,
-            EnquiryStatus.CONTACTED.value,
-            EnquiryStatus.QUOTED.value,
-        ):
-            enquiry.status = EnquiryStatus.QUOTED.value
+        # Sending the response completes the seller side of the enquiry.
+        enquiry.status = EnquiryStatus.RESPONDED.value
+        enquiry.responded_at = datetime.now(timezone.utc)
 
         create_notification(
             self.db,
             user_id=enquiry.buyer_id,
             type=NotificationType.QUOTATION_SENT.value,
-            title="New quotation received",
+            title="Seller responded to your enquiry",
             message=(
-                f"{enquiry.business_name or f'Business {user_id}'} sent you a quotation "
-                f"for {enquiry.product_name or enquiry.service_name or 'your enquiry'} "
+                f"{enquiry.business_name or f'Business {user_id}'} responded to "
+                f"enquiry {enquiry.reference} for "
+                f"{item_name or 'your enquiry'} "
                 f"totalling Rs. {amount:,.2f}."
             ),
             enquiry_id=enquiry.id,
@@ -1322,17 +1396,26 @@ class SellerService:
             "page_size": page_size,
         }
 
-    def send_message(self, user_id: int, receiver_id: int, content: str) -> Message:
+    def send_message(self, user_id: int, receiver_id: int, content: str, enquiry_id: int | None = None) -> Message:
         receiver = self.db.get(User, receiver_id)
         if receiver is None:
             raise SellerError("The specified receiver does not exist.")
         if receiver_id == user_id:
             raise SellerError("Cannot send message to yourself.")
 
+        if enquiry_id is not None:
+            enquiry = self.db.get(Enquiry, enquiry_id)
+            if enquiry is None:
+                raise SellerError("Enquiry not found.")
+            owned_profile_ids = self._get_owned_profile_ids(user_id)
+            if enquiry.seller_id != user_id and enquiry.profile_id not in owned_profile_ids:
+                raise SellerError("You are not authorized to message for this enquiry.")
+
         msg = Message(
             sender_id=user_id,
             receiver_id=receiver_id,
             content=content.strip(),
+            enquiry_id=enquiry_id,
         )
         self.db.add(msg)
         self.db.commit()

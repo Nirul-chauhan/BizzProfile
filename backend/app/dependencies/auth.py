@@ -92,10 +92,7 @@ require_buyer_or_seller_or_admin = _require_role("BUYER", "SELLER", "ADMIN")
 require_any_authenticated = _require_role("ADMIN", "BUYER", "SELLER", "USER")
 
 # Backward compat alias: `require_enduser` guards the seller dashboard
-# (enquiries, quotations, products/services, profile). ADMIN satisfies it too,
-# because admins can own and operate their own business profiles -- and every
-# handler additionally scopes writes to profiles the calling user owns, so
-# this widens *who* may call, never *whose* data they can touch.
+# Sellers (ENDUSER/SELLER) and admins can access seller dashboard.
 require_enduser = require_seller_or_admin
 
 # Backward-compatible alias (any authenticated user)

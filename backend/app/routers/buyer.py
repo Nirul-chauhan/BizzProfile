@@ -10,12 +10,14 @@ from app.dependencies.auth import (
     require_buyer_or_admin,
     require_buyer_or_seller_or_admin,
     require_any_authenticated,
+    require_buyer,
 )
 from app.models.user import User
 from app.models.product import Product, ProductStatus
 from app.models.biz_profile import BizProfile
 from app.models.best_seller_request import BestSellerRequest, BestSellerRequestStatus
 from app.models.trending_product_request import TrendingProductRequest, TrendingProductRequestStatus
+from app.models.enquiry import EnquiryStatus
 from app.services.buyer import BuyerService, BuyerError
 from app.schemas.buyer import (
     BuyerDashboardStats,
@@ -188,12 +190,12 @@ def delete_requirement(
 @router.post("/enquiries", response_model=BuyerEnquiryResponse, status_code=status.HTTP_201_CREATED)
 def create_enquiry(
     data: BuyerEnquiryCreate,
-    current_user: User = Depends(require_buyer_or_seller_or_admin),
+    current_user: User = Depends(require_buyer_or_admin),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
     try:
-        return svc.create_enquiry(current_user.id, data.model_dump())
+        return svc.create_enquiry(current_user.id, data.model_dump(exclude_none=True))
     except BuyerError as e:
         _handle_buyer_error(e)
 
@@ -202,7 +204,8 @@ def create_enquiry(
 def list_enquiries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(require_buyer_or_seller_or_admin),
+    status: EnquiryStatus | None = Query(default=None),
+    current_user: User = Depends(require_buyer_or_admin),
     db: Session = Depends(get_db_session),
 ):
     svc = _get_service(db)
@@ -362,7 +365,7 @@ def send_message(
 ):
     svc = _get_service(db)
     try:
-        return svc.send_message(current_user.id, data.receiver_id, data.content)
+        return svc.send_message(current_user.id, data.receiver_id, data.content, data.enquiry_id)
     except BuyerError as e:
         _handle_buyer_error(e)
 

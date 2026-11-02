@@ -723,11 +723,11 @@ export async function buyerGetMessages(userId, page = 1, pageSize = 50) {
   });
 }
 
-export async function buyerSendMessage(receiverId, content) {
+export async function buyerSendMessage(receiverId, content, enquiryId = null) {
   return request("/buyer/messages", {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ receiver_id: receiverId, content }),
+    body: JSON.stringify({ receiver_id: receiverId, content, enquiry_id: enquiryId }),
   });
 }
 
@@ -921,11 +921,14 @@ export async function sellerGetEnquiry(id) {
   return request(`/seller/enquiries/${id}`, { headers: authHeaders() });
 }
 
-export async function sellerUpdateEnquiryStatus(id, status) {
+export async function sellerUpdateEnquiryStatus(id, status, rejectionReason = null) {
   return request(`/seller/enquiries/${id}/status`, {
     method: "PUT",
     headers: authHeaders(),
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({
+      status,
+      ...(rejectionReason ? { rejection_reason: rejectionReason } : {}),
+    }),
   });
 }
 
@@ -976,11 +979,11 @@ export async function sellerGetMessages(userId, page = 1, pageSize = 50) {
   });
 }
 
-export async function sellerSendMessage(receiverId, content) {
+export async function sellerSendMessage(receiverId, content, enquiryId = null) {
   return request("/seller/messages", {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ receiver_id: receiverId, content }),
+    body: JSON.stringify({ receiver_id: receiverId, content, enquiry_id: enquiryId }),
   });
 }
 

@@ -549,8 +549,29 @@ class SellerBusinessHourResponse(BaseModel):
 # Enquiries
 # ---------------------------------------------------------------------------
 
+class SellerEnquiryResponseSummary(BaseModel):
+    """The seller's persisted reply, shown alongside the enquiry."""
+
+    id: int
+    amount: float
+    quantity: int
+    unit_price: float | None = None
+    item_name: str | None = None
+    description: str | None = None
+    availability: str | None = None
+    delivery_days: int | None = None
+    delivery_display: str | None = None
+    message: str | None = None
+    terms: str | None = None
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class SellerEnquiryResponse(BaseModel):
     id: int
+    reference: str
     buyer_id: int
     seller_id: int
     profile_id: int
@@ -562,12 +583,15 @@ class SellerEnquiryResponse(BaseModel):
     message: str
     quantity: int
     status: str
+    rejection_reason: str | None = None
+    responded_at: datetime | None = None
     buyer_name: str | None = None
     buyer_email: str | None = None
     buyer_city: str | None = None
     buyer_location: str | None = None
     product_name: str | None = None
     service_name: str | None = None
+    latest_response: SellerEnquiryResponseSummary | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -576,6 +600,7 @@ class SellerEnquiryResponse(BaseModel):
 
 class SellerEnquiryUpdateStatus(BaseModel):
     status: str
+    rejection_reason: str | None = None
 
     @field_validator("status")
     @classmethod
@@ -584,6 +609,15 @@ class SellerEnquiryUpdateStatus(BaseModel):
         if v not in allowed:
             raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
         return v
+
+    @field_validator("rejection_reason")
+    @classmethod
+    def validate_rejection_reason(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if len(v) > 2000:
+                raise ValueError("rejection_reason must be at most 2000 characters")
+        return v or None
 
 
 # ---------------------------------------------------------------------------
@@ -600,11 +634,42 @@ class SellerQuotationCreate(BaseModel):
     quantity: int | None = None
     unit_price: float | None = None
     amount: float | None = None
+    # Reply details that turn a price into a complete response.
+    item_name: str | None = None
+    availability: str | None = None
+    message: str | None = None
     description: str | None = None
     terms: str | None = None
     delivery_days: int | None = None
     valid_days: int | None = None
     valid_until: datetime | None = None
+
+    @field_validator("item_name")
+    @classmethod
+    def validate_item_name(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if len(v) > 255:
+                raise ValueError("item_name must be at most 255 characters")
+        return v or None
+
+    @field_validator("availability")
+    @classmethod
+    def validate_availability(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if len(v) > 2000:
+                raise ValueError("availability must be at most 2000 characters")
+        return v or None
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if len(v) > 5000:
+                raise ValueError("message must be at most 5000 characters")
+        return v or None
 
     @field_validator("quantity")
     @classmethod
@@ -746,6 +811,9 @@ class SellerQuotationResponse(BaseModel):
     amount: float
     quantity: int
     unit_price: float | None = None
+    item_name: str | None = None
+    availability: str | None = None
+    message: str | None = None
     delivery_days: int | None = None
     valid_days: int | None = None
     description: str | None
@@ -811,6 +879,7 @@ class SellerRequirementResponse(BaseModel):
 class SellerMessageCreate(BaseModel):
     receiver_id: int
     content: str
+    enquiry_id: int | None = None
 
     @field_validator("content")
     @classmethod
@@ -823,6 +892,7 @@ class SellerMessageCreate(BaseModel):
 
 class SellerMessageResponse(BaseModel):
     id: int
+    enquiry_id: int | None = None
     sender_id: int
     receiver_id: int
     content: str

@@ -15,6 +15,9 @@ from app.database import Base
 
 
 class EnquiryStatus(str, enum.Enum):
+    # Lifecycle for the buyer -> seller -> response workflow.
+    PENDING = "PENDING"      # buyer submitted, seller has not decided yet
+    RESPONDED = "RESPONDED"  # seller accepted and sent a response
     NEW = "NEW"
     CONTACTED = "CONTACTED"
     QUOTED = "QUOTED"
@@ -61,7 +64,13 @@ class Enquiry(Base):
     requirement: Mapped[str | None] = mapped_column(Text, nullable=True)
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=EnquiryStatus.NEW.value
+        String(20), nullable=False, default=EnquiryStatus.PENDING.value
+    )
+    # Seller decision + reply metadata, persisted so the buyer can still see
+    # the outcome after a refresh or a fresh login.
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
@@ -134,6 +143,18 @@ class Enquiry(Base):
     @property
     def service_name(self) -> str | None:
         return self.service.name if self.service else None
+
+    @property
+    def reference(self) -> str:
+        """Stable human-readable enquiry reference, e.g. ENQ-00042."""
+        return f"ENQ-{self.id:05d}"
+
+    @property
+    def latest_response(self):
+        """The seller's most recent response (a quotation) for this enquiry."""
+        if not self.quotations:
+            return None
+        return max(self.quotations, key=lambda q: q.created_at)
 
     def __repr__(self) -> str:
         return f"<Enquiry(id={self.id}, buyer_id={self.buyer_id}, status='{self.status}')>"

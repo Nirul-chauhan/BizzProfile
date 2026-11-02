@@ -16,6 +16,8 @@ import {
 import { buyerListEnquiries } from "../api";
 
 const STATUS_STYLES = {
+  PENDING: "bg-amber-100 text-amber-700",
+  RESPONDED: "bg-violet-100 text-violet-700",
   NEW: "bg-blue-100 text-blue-700",
   CONTACTED: "bg-amber-100 text-amber-700",
   QUOTED: "bg-violet-100 text-violet-700",
@@ -114,16 +116,16 @@ export default function BuyerEnquiries({ onViewQuotations }) {
       {/* Status Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Total", count: enquiries.length, color: "bg-gray-50 text-gray-700" },
-          { label: "New", count: statusCounts.NEW || 0, color: "bg-blue-50 text-blue-700" },
-          { label: "Quoted", count: statusCounts.QUOTED || 0, color: "bg-violet-50 text-violet-700" },
-          { label: "Closed", count: statusCounts.CLOSED || 0, color: "bg-gray-50 text-gray-500" },
+          { label: "Total", key: "ALL", count: enquiries.length, color: "bg-gray-50 text-gray-700" },
+          { label: "Pending", key: "PENDING", count: statusCounts.PENDING || 0, color: "bg-amber-50 text-amber-700" },
+          { label: "Responded", key: "RESPONDED", count: statusCounts.RESPONDED || 0, color: "bg-violet-50 text-violet-700" },
+          { label: "Accepted", key: "ACCEPTED", count: statusCounts.ACCEPTED || 0, color: "bg-emerald-50 text-emerald-700" },
         ].map((s) => (
           <button
             key={s.label}
-            onClick={() => setFilterStatus(s.label === "Total" ? "ALL" : s.label)}
+            onClick={() => setFilterStatus(s.key)}
             className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
-              filterStatus === (s.label === "Total" ? "ALL" : s.label)
+              filterStatus === s.key
                 ? "border-blue-500 ring-2 ring-blue-500/20"
                 : "border-gray-200 hover:border-gray-300"
             } ${s.color}`}
@@ -173,7 +175,7 @@ export default function BuyerEnquiries({ onViewQuotations }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-sm font-bold text-gray-900">
-                        Enquiry #{e.id}
+                        {e.reference || `ENQ-${String(e.id).padStart(5, "0")}`}
                       </span>
                       <StatusBadge status={e.status} />
                     </div>
@@ -182,6 +184,9 @@ export default function BuyerEnquiries({ onViewQuotations }) {
                       <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
                         <Building2 className="w-3.5 h-3.5 text-gray-400" />
                         {e.business_name}
+                        {e.seller_name && (
+                          <span className="text-xs font-normal text-gray-500">· {e.seller_name}</span>
+                        )}
                       </p>
                     )}
 
@@ -242,13 +247,72 @@ export default function BuyerEnquiries({ onViewQuotations }) {
                         )}
                       </div>
                     )}
+
+                    {e.latest_response ? (
+                      <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-extrabold uppercase tracking-wide text-violet-700">
+                            Seller response
+                          </p>
+                          {e.latest_response.created_at && (
+                            <span className="text-[11px] text-violet-500">
+                              {new Date(e.latest_response.created_at).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-700">
+                          <p>
+                            <span className="font-semibold">Item:</span>{" "}
+                            {e.latest_response.item_name || itemName || "—"}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Price:</span>{" "}
+                            ₹{Number(e.latest_response.amount || 0).toLocaleString()}
+                          </p>
+                          {e.latest_response.availability && (
+                            <p className="col-span-2">
+                              <span className="font-semibold">Availability:</span>{" "}
+                              {e.latest_response.availability}
+                            </p>
+                          )}
+                          {e.latest_response.delivery_display && (
+                            <p className="col-span-2">
+                              <span className="font-semibold">Delivery:</span>{" "}
+                              {e.latest_response.delivery_display}
+                            </p>
+                          )}
+                          {e.latest_response.description && (
+                            <p className="col-span-2">
+                              <span className="font-semibold">Details:</span>{" "}
+                              {e.latest_response.description}
+                            </p>
+                          )}
+                          {e.latest_response.message && (
+                            <p className="col-span-2">
+                              <span className="font-semibold">Message:</span>{" "}
+                              {e.latest_response.message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : e.status === "REJECTED" ? (
+                      <div className="mt-3 rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">
+                        <span className="font-semibold">This enquiry was rejected.</span>{" "}
+                        {e.rejection_reason || "No reason was provided."}
+                      </div>
+                    ) : e.status === "PENDING" || e.status === "NEW" ? (
+                      <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700">
+                        <Clock className="w-3.5 h-3.5" /> Waiting for seller response
+                      </div>
+                    ) : null}
                   </div>
 
                   {/* Once a seller has quoted, this is the only path to the
                       price they offered — surface it right on the enquiry,
                       and keep it reachable after the buyer has decided. */}
                   {onViewQuotations &&
-                    ["QUOTED", "ACCEPTED", "REJECTED"].includes(e.status) && (
+                    (e.latest_response ||
+                      ["QUOTED", "RESPONDED", "ACCEPTED", "REJECTED"].includes(e.status)) && (
                       <div className="flex-shrink-0">
                         <button
                           onClick={() => onViewQuotations(e.id)}
